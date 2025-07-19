@@ -61,7 +61,7 @@ from herokutl.network.connection import (
     ConnectionTcpMTProxyRandomizedIntermediate,
 )
 from herokutl.password import compute_check
-from herokutl.sessions import MemorySession, SQLiteSession
+from herokutl.sessions import MemorySession, SQLiteSession, StringSession
 from herokutl.tl.functions.account import GetPasswordRequest
 from herokutl.tl.functions.auth import CheckPasswordRequest
 
@@ -294,6 +294,12 @@ def parse_arguments() -> dict:
     parser.add_argument("--phone", "-p", action="append")
     parser.add_argument("--no-web", dest="disable_web", action="store_true")
     parser.add_argument(
+        "--add-account",
+        dest="add_account",
+        action="store_true",
+        help="Add a new account via CLI",
+    )
+    parser.add_argument(
         "--qr-login",
         dest="qr_login",
         action="store_true",
@@ -454,7 +460,7 @@ class Heroku:
                 )
             )
             for session in filter(
-                lambda f: f.startswith("heroku-") or f.startswith("hikka-") and f.endswith(".session"),
+                lambda f: (f.startswith("heroku-") or f.startswith("hikka-")) and f.endswith(".session"),
                 os.listdir(BASE_DIR),
             )
         ]
@@ -597,6 +603,37 @@ class Heroku:
 
         return False
 
+    async def _handle_new_session(self, client: CustomTelegramClient):
+        """
+        Handles the logic for a newly created session.
+        If --add-account is specified, it prints the session string and exits.
+        Otherwise, it saves the session and restarts the userbot.
+        """
+        if self.arguments.add_account:
+            # Convert session to string and get user info
+            session_string = StringSession.save(client.session)
+            new_user = await client.get_me()
+
+            # Print instructions for the user
+            print("\n\033[0;92m✅ Login successful!\033[0m")
+            print(f"User ID: {new_user.id}")
+            print("\nTo complete adding the account, do the following:")
+            print("1. Copy the session string below.")
+            print("2. Send it to your 'Saved Messages' on your main Heroku account.")
+            print("3. Reply to that message with the command: .addsession")
+            print("\n\033[0;93mSession string:\033[0m")
+            print(session_string)
+
+            # Exit the script without restarting
+            sys.exit(0)
+        else:
+            # Original behavior for the first-time setup
+            print_banner("success.txt")
+            print("\033[0;92mLogged in successfully!\033[0m")
+            await self.save_client_session(client)
+            self.clients += [client]
+            return True
+
     async def _phone_login(self, client: CustomTelegramClient) -> bool:
         phone = input(
             "\033[0;96mEnter phone: \033[0m"
@@ -606,9 +643,8 @@ class Heroku:
 
         await client.start(phone)
 
-        await self.save_client_session(client)
-        self.clients += [client]
-        return True
+        # Use the new handler for the session
+        return await self._handle_new_session(client)
 
     async def _initial_setup(self) -> bool:
         """Responsible for first start"""
@@ -722,12 +758,9 @@ class Heroku:
                         return False
                     else:
                         break
-
-            print_banner("success.txt")
-            print("\033[0;92mLogged in successfully!\033[0m")
-            await self.save_client_session(client)
-            self.clients += [client]
-            return True
+            
+            # Use the new handler for the session
+            return await self._handle_new_session(client)
 
         if not self.web.running.is_set():
             await self.web.start(
