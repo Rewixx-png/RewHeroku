@@ -14,6 +14,7 @@ import logging
 import os
 import random
 import uuid
+import asyncio
 
 import herokutl
 from herokutl.sessions import StringSession
@@ -50,7 +51,7 @@ class HerokuSettingsMod(loader.Module):
     """Advanced settings for Heroku Userbot"""
 
     strings = {"name": "HerokuSettings"}
-
+    
     def __init__(self):
         self.config = loader.ModuleConfig(
             loader.ConfigValue(
@@ -348,7 +349,7 @@ class HerokuSettingsMod(loader.Module):
         nn = self._db.get(main.__name__, "nonickusers", [])
         if u not in nn:
             nn += [u]
-            nn = list(set(nn))  # skipcq: PTC-W0018
+            nn = list(set(nn))
             await utils.answer(message, self.strings("user_nn").format("on"))
         else:
             nn = list(set(nn) - {u})
@@ -367,7 +368,7 @@ class HerokuSettingsMod(loader.Module):
         nn = self._db.get(main.__name__, "nonickchats", [])
         if chat not in nn:
             nn += [chat]
-            nn = list(set(nn))  # skipcq: PTC-W0018
+            nn = list(set(nn))
             await utils.answer(
                 message,
                 self.strings("cmd_nn").format(
@@ -975,24 +976,29 @@ class HerokuSettingsMod(loader.Module):
         await call.edit("<b>Adding account...</b>")
 
         try:
+            logging.info("Creating temporary client to save session...")
             temp_client = CustomTelegramClient(StringSession(session_string), main.heroku.api_token.ID, main.heroku.api_token.HASH)
             await temp_client.connect()
             
+            logging.info("Saving new session to file...")
             await main.heroku.save_client_session(temp_client, delay_restart=True)
             
             await temp_client.disconnect()
+            logging.info("Temporary client disconnected.")
 
-            await call.edit("<b>Account added successfully! Restarting...</b>")
+            await call.edit("<b>✅ Аккаунт успешно добавлен! Перезапускаюсь...</b>")
             
-            # ИСПРАВЛЕНИЕ: Убираем await
+            await asyncio.sleep(2)
+            
+            logging.info("Restarting userbot to apply new account...")
             restart()
         except Exception as e:
             logger.exception("Failed to add account")
-            await call.edit(f"<b>An error occurred while adding the account:</b>\n\n<pre>{e}</pre>")
+            await call.edit(f"<b>Произошла ошибка при добавлении аккаунта:</b>\n\n<pre>{e}</pre>")
 
     async def _deny_add_session(self, call: InlineCall, session_id: str):
         temp_sessions_pointer = self.pointer("temp_sessions", {})
         if session_id in temp_sessions_pointer:
             del temp_sessions_pointer[session_id]
         
-        await call.edit("<b>Account addition has been denied.</b>")
+        await call.edit("<b>Добавление аккаунта отклонено.</b>")
