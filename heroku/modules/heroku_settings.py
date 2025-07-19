@@ -10,7 +10,6 @@
 # You can redistribute it and/or modify it under the terms of the GNU AGPLv3
 # 🔑 https://www.gnu.org/licenses/agpl-3.0.html
 
-
 import logging
 import os
 import random
@@ -51,6 +50,44 @@ class HerokuSettingsMod(loader.Module):
     """Advanced settings for Heroku Userbot"""
 
     strings = {"name": "HerokuSettings"}
+    
+    def __init__(self):
+        self.config = loader.ModuleConfig(
+            loader.ConfigValue(
+                "custom_message",
+                doc=lambda: self.strings("_cfg_cst_msg"),
+            ),
+            loader.ConfigValue(
+                "banner_url",
+                "https://raw.githubusercontent.com/coddrago/assets/refs/heads/main/heroku/heroku_info.png",
+                lambda: self.strings("_cfg_banner"),
+            ),
+            loader.ConfigValue(
+                "show_heroku",
+                True,
+                validator=loader.validators.Boolean(),
+            ),
+            loader.ConfigValue(
+                "ping_emoji",
+                "🪐",
+                lambda: self.strings["ping_emoji"],
+                validator=loader.validators.String(),
+            ),
+            loader.ConfigValue(
+                "switchInfo",
+                False,
+                "Switch info to mode photo",
+                validator=loader.validators.Boolean(),
+            ),
+            loader.ConfigValue(
+                "imgSettings",
+                ["Лапокапканот", 30, '#000', '0|0', "mm", 0, '#000'],
+                "Image settings\n1. Дополнительный ник (если прежний ник не отображается)\n2. Размер шрифта\n3. Цвет шрифта в HEX формате '#000'\n4. Координаты текста '100|100', по умолчания в центре фотографии\n5. Якорь текста -> https://pillow.readthedocs.io/en/stable/_images/anchor_horizontal.svg\n6. Размер обводки, по умолчанию 0\n7. Цвет обводки в HEX формате '#000'",
+                validator=loader.validators.Series(
+                    fixed_len=7,
+                ),
+            ),
+        )
 
     def get_watchers(self) -> tuple:
         return [
@@ -875,7 +912,7 @@ class HerokuSettingsMod(loader.Module):
             self.strings("invoke").format(method, utils.escape_html(result)),
         )
 
-    # Command to add new account session
+    # <<< НАЧАЛО ИЗМЕНЕНИЙ >>>
     @loader.command()
     async def addsession(self, message: Message):
         """<reply to session string> - Add new account"""
@@ -889,81 +926,4 @@ class HerokuSettingsMod(loader.Module):
         # Validate session string before proceeding
         temp_client = CustomTelegramClient(StringSession(session_string), main.heroku.api_token.ID, main.heroku.api_token.HASH)
         try:
-            await temp_client.connect()
-            new_user = await temp_client.get_me()
-            if not new_user:
-                raise Exception("Could not get user info from session.")
-        except Exception as e:
-            await utils.answer(message, f"<b>Invalid session string.</b>\n\n<pre>{e}</pre>")
-            return
-        finally:
-            await temp_client.disconnect()
-
-        # Temporarily store the session for confirmation
-        session_id = str(uuid.uuid4())
-        
-        temp_sessions = self.db.get("temp_sessions", {})
-        temp_sessions[session_id] = session_string
-        self.db.set("temp_sessions", temp_sessions)
-
-        text = (
-            "<b>Confirm Account Addition</b>\n\n"
-            f"You are about to add the account: <code>{new_user.first_name} (ID: {new_user.id})</code>.\n\n"
-            "Are you sure?"
-        )
-
-        await self.inline.form(
-            message=message,
-            text=text,
-            reply_markup=[
-                {
-                    "text": "✅ Approve",
-                    "callback": self._approve_add_session,
-                    "args": (session_id,),
-                },
-                {
-                    "text": "❌ Deny",
-                    "callback": self._deny_add_session,
-                    "args": (session_id,),
-                },
-            ],
-        )
-
-    async def _approve_add_session(self, call: InlineCall, session_id: str):
-        temp_sessions = self.db.get("temp_sessions", {})
-        session_string = temp_sessions.pop(session_id, None)
-
-        if not session_string:
-            await call.edit("<b>Error:</b> Session not found or expired. Please try again.")
-            return
-        
-        self.db.set("temp_sessions", temp_sessions)
-
-        await call.edit("<b>Adding account...</b>")
-
-        try:
-            # Create a temporary client to save the session file correctly
-            temp_client = CustomTelegramClient(StringSession(session_string), main.heroku.api_token.ID, main.heroku.api_token.HASH)
-            await temp_client.connect()
-            
-            # Use the existing function to save the session file
-            await main.heroku.save_client_session(temp_client, delay_restart=True)
-            
-            await temp_client.disconnect()
-
-            await call.edit("<b>Account added successfully! Restarting...</b>")
-            
-            # Restart the userbot to load the new session
-            restart()
-        except Exception as e:
-            logger.exception("Failed to add account")
-            await call.edit(f"<b>An error occurred while adding the account:</b>\n\n<pre>{e}</pre>")
-
-    async def _deny_add_session(self, call: InlineCall, session_id: str):
-        # Remove the temporary session
-        temp_sessions = self.db.get("temp_sessions", {})
-        if session_id in temp_sessions:
-            del temp_sessions[session_id]
-            self.db.set("temp_sessions", temp_sessions)
-        
-        await call.edit("<b>Account addition has been denied.</b>")
+            await
