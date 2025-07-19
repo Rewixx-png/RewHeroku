@@ -50,7 +50,7 @@ class HerokuSettingsMod(loader.Module):
     """Advanced settings for Heroku Userbot"""
 
     strings = {"name": "HerokuSettings"}
-    
+
     def __init__(self):
         self.config = loader.ModuleConfig(
             loader.ConfigValue(
@@ -911,8 +911,7 @@ class HerokuSettingsMod(loader.Module):
             message,
             self.strings("invoke").format(method, utils.escape_html(result)),
         )
-
-    # <<< НАЧАЛО ИЗМЕНЕНИЙ >>>
+    
     @loader.command()
     async def addsession(self, message: Message):
         """<reply to session string> - Add new account"""
@@ -926,4 +925,74 @@ class HerokuSettingsMod(loader.Module):
         # Validate session string before proceeding
         temp_client = CustomTelegramClient(StringSession(session_string), main.heroku.api_token.ID, main.heroku.api_token.HASH)
         try:
-            await
+            await temp_client.connect()
+            new_user = await temp_client.get_me()
+            if not new_user:
+                raise Exception("Could not get user info from session.")
+        except Exception as e:
+            await utils.answer(message, f"<b>Invalid session string.</b>\n\n<pre>{e}</pre>")
+            return
+        finally:
+            await temp_client.disconnect()
+
+        session_id = str(uuid.uuid4())
+        
+        # Используем self.pointer для безопасной работы с БД
+        temp_sessions_pointer = self.pointer("temp_sessions", {})
+        temp_sessions_pointer[session_id] = session_string
+
+        text = (
+            "<b>Confirm Account Addition</b>\n\n"
+            f"You are about to add the account: <code>{new_user.first_name} (ID: {new_user.id})</code>.\n\n"
+            "Are you sure?"
+        )
+
+        await self.inline.form(
+            message=message,
+            text=text,
+            reply_markup=[
+                {
+                    "text": "✅ Approve",
+                    "callback": self._approve_add_session,
+                    "args": (session_id,),
+                },
+                {
+                    "text": "❌ Deny",
+                    "callback": self._deny_add_session,
+                    "args": (session_id,),
+                },
+            ],
+        )
+
+    async def _approve_add_session(self, call: InlineCall, session_id: str):
+        temp_sessions_pointer = self.pointer("temp_sessions", {})
+        session_string = temp_sessions_pointer.pop(session_id, None)
+
+        if not session_string:
+            await call.edit("<b>Error:</b> Session not found or expired. Please try again.")
+            return
+
+        await call.edit("<b>Adding account...</b>")
+
+        try:
+            temp_client = CustomTelegramClient(StringSession(session_string), main.heroku.api_token.ID, main.heroku.api_token.HASH)
+            await temp_client.connect()
+            
+            await main.heroku.save_client_session(temp_client, delay_restart=True)
+            
+            await temp_client.disconnect()
+
+            await call.edit("<b>Account added successfully! Restarting...</b>")
+            
+            # ИСПРАВЛЕНИЕ: Убираем await
+            restart()
+        except Exception as e:
+            logger.exception("Failed to add account")
+            await call.edit(f"<b>An error occurred while adding the account:</b>\n\n<pre>{e}</pre>")
+
+    async def _deny_add_session(self, call: InlineCall, session_id: str):
+        temp_sessions_pointer = self.pointer("temp_sessions", {})
+        if session_id in temp_sessions_pointer:
+            del temp_sessions_pointer[session_id]
+        
+        await call.edit("<b>Account addition has been denied.</b>")
