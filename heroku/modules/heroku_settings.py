@@ -10,11 +10,14 @@
 # You can redistribute it and/or modify it under the terms of the GNU AGPLv3
 # 🔑 https://www.gnu.org/licenses/agpl-3.0.html
 
+
 import logging
 import os
 import random
+import uuid
 
 import herokutl
+from herokutl.sessions import StringSession
 from herokutl.tl.functions.messages import (
     GetDialogFiltersRequest,
     UpdateDialogFilterRequest,
@@ -25,6 +28,7 @@ from herokutl.utils import get_display_name
 from .. import loader, log, main, utils
 from .._internal import fw_protect, restart
 from ..inline.types import InlineCall
+from ..tl_cache import CustomTelegramClient
 from ..web import core
 
 logger = logging.getLogger(__name__)
@@ -869,4 +873,97 @@ class HerokuSettingsMod(loader.Module):
         await utils.answer(
             message,
             self.strings("invoke").format(method, utils.escape_html(result)),
-                )
+        )
+
+    # Command to add new account session
+    @loader.command()
+    async def addsession(self, message: Message):
+        """<reply to session string> - Add new account"""
+        reply = await message.get_reply_message()
+        if not reply or not reply.raw_text:
+            await utils.answer(message, "Ответьте на сообщение с сессионной строкой.")
+            return
+
+        session_string = reply.raw_text
+        
+        # Validate session string before proceeding
+        temp_client = CustomTelegramClient(StringSession(session_string), main.heroku.api_token.ID, main.heroku.api_token.HASH)
+        try:
+            await temp_client.connect()
+            new_user = await temp_client.get_me()
+            if not new_user:
+                raise Exception("Could not get user info from session.")
+        except Exception as e:
+            await utils.answer(message, f"<b>Invalid session string.</b>\n\n<pre>{e}</pre>")
+            return
+        finally:
+            await temp_client.disconnect()
+
+        # Temporarily store the session for confirmation
+        session_id = str(uuid.uuid4())
+        
+        temp_sessions = self.db.get("temp_sessions", {})
+        temp_sessions[session_id] = session_string
+        self.db.set("temp_sessions", temp_sessions)
+
+        text = (
+            "<b>Confirm Account Addition</b>\n\n"
+            f"You are about to add the account: <code>{new_user.first_name} (ID: {new_user.id})</code>.\n\n"
+            "Are you sure?"
+        )
+
+        await self.inline.form(
+            message=message,
+            text=text,
+            reply_markup=[
+                {
+                    "text": "✅ Approve",
+                    "callback": self._approve_add_session,
+                    "args": (session_id,),
+                },
+                {
+                    "text": "❌ Deny",
+                    "callback": self._deny_add_session,
+                    "args": (session_id,),
+                },
+            ],
+        )
+
+    async def _approve_add_session(self, call: InlineCall, session_id: str):
+        temp_sessions = self.db.get("temp_sessions", {})
+        session_string = temp_sessions.pop(session_id, None)
+
+        if not session_string:
+            await call.edit("<b>Error:</b> Session not found or expired. Please try again.")
+            return
+        
+        self.db.set("temp_sessions", temp_sessions)
+
+        await call.edit("<b>Adding account...</b>")
+
+        try:
+            # Create a temporary client to save the session file correctly
+            temp_client = CustomTelegramClient(StringSession(session_string), main.heroku.api_token.ID, main.heroku.api_token.HASH)
+            await temp_client.connect()
+            
+            # Use the existing function to save the session file
+            await main.heroku.save_client_session(temp_client, delay_restart=True)
+            
+            await temp_client.disconnect()
+
+            await call.edit("<b>Account added successfully! Restarting...</b>")
+            
+            # Restart the userbot to load the new session
+            restart()
+        except Exception as e:
+            logger.exception("Failed to add account")
+            await call.edit(f"<b>An error occurred while adding the account:</b>\n\n<pre>{e}</pre>")
+
+    async def _deny_add_session(self, call: InlineCall, session_id: str):
+        # Remove the temporary session
+        temp_sessions = self.db.get("temp_sessions", {})
+        if session_id in temp_sessions:
+            del temp_sessions[session_id]
+            self.db.set("temp_sessions", temp_sessions)
+        
+        await call.edit("<b>Account addition has been denied.</b>")
