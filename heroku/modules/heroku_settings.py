@@ -51,7 +51,7 @@ class HerokuSettingsMod(loader.Module):
     """Advanced settings for Heroku Userbot"""
 
     strings = {"name": "HerokuSettings"}
-    
+
     def __init__(self):
         self.config = loader.ModuleConfig(
             loader.ConfigValue(
@@ -349,7 +349,7 @@ class HerokuSettingsMod(loader.Module):
         nn = self._db.get(main.__name__, "nonickusers", [])
         if u not in nn:
             nn += [u]
-            nn = list(set(nn))
+            nn = list(set(nn))  # skipcq: PTC-W0018
             await utils.answer(message, self.strings("user_nn").format("on"))
         else:
             nn = list(set(nn) - {u})
@@ -368,7 +368,7 @@ class HerokuSettingsMod(loader.Module):
         nn = self._db.get(main.__name__, "nonickchats", [])
         if chat not in nn:
             nn += [chat]
-            nn = list(set(nn))
+            nn = list(set(nn))  # skipcq: PTC-W0018
             await utils.answer(
                 message,
                 self.strings("cmd_nn").format(
@@ -944,7 +944,7 @@ class HerokuSettingsMod(loader.Module):
 
         text = (
             "<b>Confirm Account Addition</b>\n\n"
-            f"You are about to add the account: <code>{new_user.first_name} (ID: {new_user.id})</code>.\n\n"
+            f"You are about to add the account: <h2>{new_user.first_name} (ID: {new_user.id})</code>.\n\n"
             "Are you sure?"
         )
 
@@ -966,35 +966,44 @@ class HerokuSettingsMod(loader.Module):
         )
 
     async def _approve_add_session(self, call: InlineCall, session_id: str):
-        temp_sessions_pointer = self.pointer("temp_sessions", {})
-        session_string = temp_sessions_pointer.pop(session_id, None)
-
-        if not session_string:
-            await call.edit("<b>Error:</b> Session not found or expired. Please try again.")
-            return
-
-        await call.edit("<b>Adding account...</b>")
-
+        self.allmodules.autosaver_paused = True
+        logging.warning("Database autosaver paused for new account registration.")
+        
         try:
-            logging.info("Creating temporary client to save session...")
-            temp_client = CustomTelegramClient(StringSession(session_string), main.heroku.api_token.ID, main.heroku.api_token.HASH)
-            await temp_client.connect()
-            
-            logging.info("Saving new session to file...")
-            await main.heroku.save_client_session(temp_client, delay_restart=True)
-            
-            await temp_client.disconnect()
-            logging.info("Temporary client disconnected.")
+            temp_sessions_pointer = self.pointer("temp_sessions", {})
+            session_string = temp_sessions_pointer.pop(session_id, None)
 
-            await call.edit("<b>✅ Аккаунт успешно добавлен! Перезапускаюсь...</b>")
-            
-            await asyncio.sleep(2)
-            
-            logging.info("Restarting userbot to apply new account...")
-            restart()
-        except Exception as e:
-            logger.exception("Failed to add account")
-            await call.edit(f"<b>Произошла ошибка при добавлении аккаунта:</b>\n\n<pre>{e}</pre>")
+            if not session_string:
+                await call.edit("<b>Error:</b> Session not found or expired. Please try again.")
+                return
+
+            await call.edit("<b>Adding account...</b>")
+
+            try:
+                logging.info("Creating temporary client to save session...")
+                temp_client = CustomTelegramClient(StringSession(session_string), main.heroku.api_token.ID, main.heroku.api_token.HASH)
+                await temp_client.connect()
+                
+                logging.info("Saving new session to file...")
+                await main.heroku.save_client_session(temp_client, delay_restart=True)
+                
+                await temp_client.disconnect()
+                logging.info("Temporary client disconnected.")
+
+                await call.edit("<b>✅ Аккаунт успешно добавлен! Перезапускаюсь...</b>")
+                
+                await asyncio.sleep(2)
+                
+                logging.info("Restarting userbot to apply new account...")
+                restart()
+            except Exception as e:
+                logger.exception("Failed to add account")
+                await call.edit(f"<b>Произошла ошибка при добавлении аккаунта:</b>\n\n<pre>{e}</pre>")
+
+        finally:
+            self.allmodules.autosaver_paused = False
+            logging.warning("Database autosaver resumed.")
+
 
     async def _deny_add_session(self, call: InlineCall, session_id: str):
         temp_sessions_pointer = self.pointer("temp_sessions", {})

@@ -1,4 +1,4 @@
-"""Registers modules"""
+"""Loads and registers modules"""
 
 # ©️ Dan Gazizullin, 2021-2023
 # This file is a part of Hikka Userbot
@@ -517,9 +517,51 @@ class Modules:
         self.db = db
         self.translator = translator
         self.secure_boot = False
+        # <<< НАЧАЛО ИЗМЕНЕНИЙ >>>
+        self.autosaver_paused = False  # Флаг для приостановки автосохранения
+        # <<< КОНЕЦ ИЗМЕНЕНИЙ >>>
         asyncio.ensure_future(self._junk_collector())
         self.inline = InlineManager(self.client, self._db, self)
         self.client.heroku_inline = self.inline
+
+    @loader.loop(interval=3, wait_before=True, autostart=True)
+    async def _config_autosaver(self):
+        # <<< НАЧАЛО ИЗМЕНЕНИЙ >>>
+        if self.autosaver_paused:
+            return
+        # <<< КОНЕЦ ИЗМЕНЕНИЙ >>>
+        
+        for mod in self.modules:
+            if (
+                not hasattr(mod, "config")
+                or not mod.config
+                or not isinstance(mod.config, loader.ModuleConfig)
+            ):
+                continue
+
+            for option, config in mod.config._config.items():
+                if not hasattr(config, "_save_marker"):
+                    continue
+
+                delattr(mod.config._config[option], "_save_marker")
+                mod.pointer("__config__", {})[option] = config.value
+
+        for lib in self.libraries:
+            if (
+                not hasattr(lib, "config")
+                or not lib.config
+                or not isinstance(lib.config, loader.ModuleConfig)
+            ):
+                continue
+
+            for option, config in lib.config._config.items():
+                if not hasattr(config, "_save_marker"):
+                    continue
+
+                delattr(lib.config._config[option], "_save_marker")
+                lib._lib_pointer("__config__", {})[option] = config.value
+
+        self._db.save()
 
     async def _junk_collector(self):
         """
