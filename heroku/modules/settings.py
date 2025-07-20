@@ -11,7 +11,7 @@
 # 🔑 https://www.gnu.org/licenses/agpl-3.0.html
 
 import uuid
-import logging
+import logging  # <<< ИСПРАВЛЕНИЕ ЗДЕСЬ
 import asyncio
 
 import herokutl
@@ -22,8 +22,11 @@ from herokutl.sessions import StringSession
 from .. import loader, main, utils, version
 from ..inline.types import InlineCall
 from ..tl_cache import CustomTelegramClient
-from .._internal import restart # <<< НОВЫЙ ИМПОРТ
+from .._internal import restart
 import random
+
+# Инициализируем логгер для этого модуля
+logger = logging.getLogger(__name__)
 
 
 @loader.tds
@@ -55,7 +58,7 @@ class CoreMod(loader.Module):
                 ),
                 validator=loader.validators.Boolean(),
                 on_change=self._process_config_changes,
-                ),
+            ),
         )
 
     async def client_ready(self):
@@ -66,14 +69,12 @@ class CoreMod(loader.Module):
                     "callback": self._inline__choose__installation,
                     "args": (platform,),
                 }
-                for platform in ['vds','userland','jamhost','rewhost']
+                for platform in ["vds", "userland", "jamhost", "rewhost"]
             ],
-            2
+            2,
         )
 
     def _process_config_changes(self):
-        # option is controlled by user only
-        # it's not a RCE
         if (
             self.config["allow_external_access"]
             and 1714120111 not in self._client.dispatcher.security.owner
@@ -112,7 +113,12 @@ class CoreMod(loader.Module):
         module = self.allmodules.get_classname(module)
         return f"{str(chatid)}.{module}" if module else chatid
 
-    @loader.command(ru_doc="Информация о Хероку", en_doc="Information of Heroku", ua_doc="Інформація про Хероку", de_doc="Informationen über Heroku")
+    @loader.command(
+        ru_doc="Информация о Хероку",
+        en_doc="Information of Heroku",
+        ua_doc="Інформація про Хероку",
+        de_doc="Informationen über Heroku",
+    )
     async def herokucmd(self, message: Message):
         await utils.answer(
             message,
@@ -131,7 +137,7 @@ class CoreMod(loader.Module):
                 if version.branch == "master"
                 else self.strings("unstable").format(version.branch)
             ),
-            file= "https://raw.githubusercontent.com/coddrago/assets/refs/heads/main/heroku/heroku_cmd.png",
+            file="https://raw.githubusercontent.com/coddrago/assets/refs/heads/main/heroku/heroku_cmd.png",
             reply_to=getattr(message, "reply_to_msg_id", None),
         )
 
@@ -321,20 +327,21 @@ class CoreMod(loader.Module):
 
         args = utils.get_args_raw(message)
 
-        if (not args or args not in {'-v', '-r', '-jh', '-ms', '-u'}) and \
-            not (await self.inline.form(
+        if (not args or args not in {"-v", "-r", "-jh", "-ms", "-u"}) and not (
+            await self.inline.form(
                 self.strings("choose_installation"),
                 message,
                 reply_markup=self._markup,
                 photo="https://raw.githubusercontent.com/coddrago/assets/refs/heads/main/heroku/heroku_installation.png",
-                disable_security=True
-        )
-            ):
-
+                disable_security=True,
+            )
+        ):
             await self.client.send_file(
                 message.peer_id,
                 "https://raw.githubusercontent.com/coddrago/assets/refs/heads/main/heroku/heroku_installation.png",
-                caption=self.strings["installation"], reply_to=getattr(message, "reply_to_msg_id", None),)
+                caption=self.strings["installation"],
+                reply_to=getattr(message, "reply_to_msg_id", None),
+            )
         elif "-v" in args:
             await utils.answer(message, self.strings["vds_install"])
         elif "-jh" in args:
@@ -346,7 +353,7 @@ class CoreMod(loader.Module):
 
     async def _inline__choose__installation(self, call: InlineCall, platform: str):
         await call.edit(
-            text=self.strings(f'{platform}_install'),
+            text=self.strings(f"{platform}_install"),
             reply_markup=self._markup,
         )
 
@@ -359,27 +366,34 @@ class CoreMod(loader.Module):
             return
 
         session_string = reply.raw_text
-        
-        temp_client = CustomTelegramClient(StringSession(session_string), main.heroku.api_token.ID, main.heroku.api_token.HASH)
+
+        temp_client = CustomTelegramClient(
+            StringSession(session_string),
+            main.heroku.api_token.ID,
+            main.heroku.api_token.HASH,
+        )
         try:
             await temp_client.connect()
             new_user = await temp_client.get_me()
             if not new_user:
                 raise Exception("Could not get user info from session.")
         except Exception as e:
-            await utils.answer(message, f"<b>Invalid session string.</b>\n\n<pre>{e}</pre>")
+            await utils.answer(
+                message, f"<b>Invalid session string.</b>\n\n<pre>{e}</pre>"
+            )
             return
         finally:
             await temp_client.disconnect()
 
         session_id = str(uuid.uuid4())
-        
+
         temp_sessions_pointer = self.pointer("temp_sessions", {})
         temp_sessions_pointer[session_id] = session_string
 
         text = (
             "<b>Confirm Account Addition</b>\n\n"
-            f"You are about to add the account: <code>{new_user.first_name} (ID: {new_user.id})</code>.\n\n"
+            f"You are about to add the account: <code>{new_user.first_name} (ID:"
+            f" {new_user.id})</code>.\n\n"
             "Are you sure?"
         )
 
@@ -403,32 +417,37 @@ class CoreMod(loader.Module):
     async def _approve_add_session(self, call: InlineCall, session_id: str):
         self.allmodules.autosaver_paused = True
         logging.warning("Database autosaver paused for new account registration.")
-        
+
         try:
             temp_sessions_pointer = self.pointer("temp_sessions", {})
             session_string = temp_sessions_pointer.pop(session_id, None)
 
             if not session_string:
-                await call.edit("<b>Error:</b> Session not found or expired. Please try again.")
+                await call.edit(
+                    "<b>Error:</b> Session not found or expired. Please try again."
+                )
                 return
 
             try:
                 logging.info("Creating temporary client to save session...")
-                temp_client = CustomTelegramClient(StringSession(session_string), main.heroku.api_token.ID, main.heroku.api_token.HASH)
+                temp_client = CustomTelegramClient(
+                    StringSession(session_string),
+                    main.heroku.api_token.ID,
+                    main.heroku.api_token.HASH,
+                )
                 await temp_client.connect()
-                
+
                 logging.info("Saving new session to file...")
-                # delay_restart=True предотвращает немедленный перезапуск
                 await main.heroku.save_client_session(temp_client, delay_restart=True)
-                
+
                 await temp_client.disconnect()
                 logging.info("Temporary client disconnected.")
-                
-                # <<< НАЧАЛО ИСПРАВЛЕНИЯ >>>
+
                 await call.edit(
                     "<b>✅ Аккаунт успешно добавлен!</b>\n\n"
                     "Чтобы изменения вступили в силу, юзербот необходимо перезагрузить.\n\n"
-                    "<i>Если перезагрузка не начнется в течение 10 секунд, нажмите кнопку ниже.</i>",
+                    "<i>Если перезагрузка не начнется в течение 10 секунд, нажмите кнопку"
+                    " ниже.</i>",
                     reply_markup=[
                         {
                             "text": "🔄 Перезагрузить юзербот",
@@ -437,26 +456,26 @@ class CoreMod(loader.Module):
                     ],
                 )
 
-                # Запускаем перезагрузку в фоновом режиме
                 asyncio.ensure_future(self.delayed_restart(call))
-                # <<< КОНЕЦ ИСПРАВЛЕНИЯ >>>
 
             except Exception as e:
                 logger.exception("Failed to add account")
-                await call.edit(f"<b>Произошла ошибка при добавлении аккаунта:</b>\n\n<pre>{e}</pre>")
+                await call.edit(
+                    "<b>Произошла ошибка при добавлении"
+                    f" аккаунта:</b>\n\n<pre>{e}</pre>"
+                )
 
         finally:
             self.allmodules.autosaver_paused = False
             logging.warning("Database autosaver resumed.")
 
-    # <<< НОВАЯ ФУНКЦИЯ ДЛЯ ОТЛОЖЕННОГО ПЕРЕЗАПУСКА >>>
     async def delayed_restart(self, call: InlineCall):
-        await asyncio.sleep(2)  # Небольшая задержка перед рестартом
+        await asyncio.sleep(2)
         logging.info("Restarting userbot to apply new account...")
         try:
             restart()
+            await asyncio.sleep(3600)
         except Exception:
-            # Если рестарт не удался, сообщаем об этом
             await call.edit(
                 "<b>🔴 Автоматическая перезагрузка не удалась!</b>\n\n"
                 "Нажмите кнопку ниже, чтобы попробовать снова.",
@@ -468,21 +487,20 @@ class CoreMod(loader.Module):
                 ],
             )
 
-    # <<< НОВАЯ ФУНКЦИЯ-ОБРАБОТЧИК ДЛЯ КНОПКИ >>>
     async def restart_from_callback(self, call: InlineCall):
         await call.edit("<b>🔄 Перезагружаюсь...</b>")
         logging.info("Restarting userbot from callback button...")
         try:
             restart()
-            # Долгая задержка, чтобы этот процесс точно был убит
             await asyncio.sleep(3600)
         except Exception:
-            await call.edit("<b>🔴 Ошибка перезагрузки. Пожалуйста, перезагрузите вручную.</b>")
-
+            await call.edit(
+                "<b>🔴 Ошибка перезагрузки. Пожалуйста, перезагрузите вручную.</b>"
+            )
 
     async def _deny_add_session(self, call: InlineCall, session_id: str):
         temp_sessions_pointer = self.pointer("temp_sessions", {})
         if session_id in temp_sessions_pointer:
             del temp_sessions_pointer[session_id]
-        
+
         await call.edit("<b>Добавление аккаунта отклонено.</b>")
