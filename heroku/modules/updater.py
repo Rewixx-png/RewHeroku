@@ -413,13 +413,14 @@ class UpdaterMod(loader.Module):
             return
 
         try:
-            await self._add_folder()
+            # await self._add_folder()
+            pass
         except Exception:
             logger.exception("Failed to add folder!")
 
         self.set("do_not_create", True)
 
-  # async def _add_folder(self):
+    async def _add_folder(self):
         folders = await self._client(GetDialogFiltersRequest())
 
         if any(getattr(folder, "title", None) == "heroku" for folder in folders.filters):
@@ -593,4 +594,3 @@ class UpdaterMod(loader.Module):
         await utils.answer(call, self.strings('rollback_process').format(num=number))
         await asyncio.create_subprocess_shell(f'git reset --hard HEAD~{number}', stdout=asyncio.subprocess.PIPE)
         await self.restart_common(call)
-
