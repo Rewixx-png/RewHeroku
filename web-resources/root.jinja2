@@ -11,7 +11,6 @@
 {% block head %}
 <script src="//cdnjs.cloudflare.com/ajax/libs/jquery-cookie/1.4.1/jquery.cookie.min.js"></script>
 <script src="//cdnjs.cloudflare.com/ajax/libs/bodymovin/5.8.1/lottie.min.js"></script>
-<!-- <script src="//unpkg.com/@dotlottie/player-component@1.0.0/dist/dotlottie-player.js"></script> -->
 <script src="//unpkg.com/qr-code-styling@1.5.0/lib/qr-code-styling.js"></script>
 
 <link href="https://css.gg/css?=arrow-right-r|add|brackets|chevron-right-o|smartphone" rel="stylesheet">
@@ -65,15 +64,11 @@
     <div class="title">
       <div class="heroku_label">
   <div class="label_inner">
-    {# Используем условный оператор для выбора иконки #}
     {% if rewhost %}
-      {# Если переменная rewhost == True, показываем иконку ракеты #}
       <img src="https://em-content.zobj.net/source/apple/354/rocket_1f680.png" class="ringed_planet">
     {% elif lavhost %}
-      {# Пример для другого хостинга, оставляем его для совместимости #}
       <img src="https://github.com/hikariatama/assets/raw/master/victory-hand_270c-fe0f.png" class="ringed_planet">
     {% else %}
-      {# Во всех остальных случаях показываем стандартную иконку #}
       <img src="{{ platform_emoji }}" class="ringed_planet">
     {% endif %}
      Heroku
@@ -83,7 +78,9 @@
     <div class="description">Incomprehensibly <span style="color:#c54245">the best</span> userbot<br><span
         style="color: #18cc18; display: none" class="authorized">Authorized!</span></div>
     <div class="center">
+      <!-- <<< НАЧАЛО ИЗМЕНЕНИЙ >>> -->
       {% if not tg_done %}
+      <!-- Если ни один аккаунт еще не добавлен, показываем полную настройку -->
       <div class="button" id="get_started">
         <div class="horiz_center">
           <div class="vert_center">
@@ -95,21 +92,7 @@
           </div>
         </div>
       </div>
-      {% else %}
-      <div class="button" id="get_started">
-        <div class="horiz_center">
-          <div class="vert_center">
-            Add phone
-          </div>
-
-          <div class="vert_center">
-            <i class="gg-add"></i>
-          </div>
-        </div>
-      </div>
-      {% endif %}
-
-      <!-- <<< НАЧАЛО ИЗМЕНЕНИЙ >>> -->
+      
       {% if not skip_creds %}
       <div class="button" id="enter_api">
         <div class="horiz_center">
@@ -123,8 +106,12 @@
         </div>
       </div>
       {% endif %}
+      {% else %}
+        <!-- Если аккаунт уже добавлен, просто показываем сообщение об успехе -->
+        <!-- Поля ввода и кнопки скрыты, т.к. вход уже выполнен -->
+      {% endif %}
       <!-- <<< КОНЕЦ ИЗМЕНЕНИЙ >>> -->
-
+      
       <span id="block_api_id">
         <label class="api_id" for="api_id">Telegram API ID: </label>
         <input class="api_id" id="api_id" placeholder="••••" style="width: 4em;">
