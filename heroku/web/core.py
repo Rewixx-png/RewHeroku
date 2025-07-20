@@ -57,6 +57,7 @@ from ..tl_cache import CustomTelegramClient
 from . import proxypass, root
 from .. import main, utils, version
 from .._internal import restart
+from ..version import __version__ # <<< ВОТ ЭТА СТРОКА ИСПРАВИТ ОШИБКУ
 
 DATA_DIR = (
     "/data"
