@@ -45,7 +45,7 @@ from herokutl.errors import (
     YouBlockedUserError,
 )
 from herokutl.password import compute_check
-from herokutl.sessions import MemorySession
+from herokutl.sessions import MemorySession, SQLiteSession
 from herokutl.tl.functions.account import GetPasswordRequest
 from herokutl.tl.functions.auth import CheckPasswordRequest
 from herokutl.tl.functions.contacts import UnblockRequest
@@ -331,9 +331,9 @@ class Web(root.Web):
         if self._qr_login is True:
             if self._2fa_needed:
                 return web.Response(status=403, body="2FA")
-
-            await main.heroku.save_client_session(self._pending_client, delay_restart=True)
-            return web.Response(status=200, body="SUCCESS")
+            
+            # <<< ИЗМЕНЕНИЕ: Не вызываем save_client_session напрямую >>>
+            return web.Response(status=200, body="SUCCESS_NO_2FA")
 
         if self._qr_login is None:
             await self.init_qr_login(request)
@@ -388,7 +388,6 @@ class Web(root.Web):
         client = self._get_client()
         self._pending_client = client
 
-        # <<< ИСПРАВЛЕНИЕ: Гарантируем подключение >>>
         await self._pending_client.connect()
         try:
             await self._pending_client.send_code_request(phone)
@@ -414,6 +413,34 @@ class Web(root.Web):
             " amount of time and try again."
         )
 
+    # <<< НАЧАЛО ИЗМЕНЕНИЙ: Новая изолированная функция сохранения >>>
+    async def _save_new_session(self, client: CustomTelegramClient):
+        """Saves a new session without interfering with the main client"""
+        try:
+            me = await client.get_me()
+            if not me:
+                raise ValueError("Could not get user info from new session")
+
+            session_filename = f"heroku-{me.id}.session"
+            destination_path = os.path.join(main.BASE_DIR, session_filename)
+            
+            if os.path.exists(destination_path):
+                logging.warning(f"Session file {destination_path} already exists. Overwriting.")
+
+            sqlite_session = SQLiteSession(destination_path)
+            sqlite_session.set_dc(
+                client.session.dc_id,
+                client.session.server_address,
+                client.session.port,
+            )
+            sqlite_session.auth_key = client.session.auth_key
+            sqlite_session.save()
+            sqlite_session._conn.close()
+            logging.info(f"Successfully saved new session to {destination_path}")
+        except Exception:
+            logging.exception("Failed to save new session file")
+            raise
+
     async def qr_2fa(self, request: web.Request) -> web.Response:
         if not self._check_session(request):
             return web.Response(status=401)
@@ -422,7 +449,6 @@ class Web(root.Web):
         logger.debug("2FA code received for QR login: %s", text)
 
         try:
-            # <<< ИСПРАВЛЕНИЕ: Гарантируем подключение >>>
             await self._pending_client.connect()
             await self._pending_client._on_login(
                 (
@@ -436,21 +462,13 @@ class Web(root.Web):
                     )
                 ).user
             )
-        except PasswordHashInvalidError:
-            logger.debug("Invalid 2FA code")
-            return web.Response(
-                status=403,
-                body="Invalid 2FA password",
-            )
-        except FloodWaitError as e:
-            logger.debug("FloodWait for 2FA code")
-            return web.Response(
-                status=421,
-                body=(self._render_fw_error(e)),
-            )
+        except Exception as e:
+            logging.error("2FA failed", exc_info=True)
+            body = "Invalid 2FA password" if isinstance(e, PasswordHashInvalidError) else self._render_fw_error(e) if isinstance(e, FloodWaitError) else str(e)
+            return web.Response(status=403, body=body)
 
         logger.debug("2FA code accepted, logging in")
-        await main.heroku.save_client_session(self._pending_client, delay_restart=True)
+        await self._save_new_session(self._pending_client)
         return web.Response(status=200, body="SUCCESS")
 
     async def tg_code(self, request: web.Request) -> web.Response:
@@ -458,55 +476,51 @@ class Web(root.Web):
             return web.Response(status=401)
 
         text = await request.text()
-        if len(text) < 6:
-            return web.Response(status=400)
-
+        if len(text) < 6: return web.Response(status=400)
+        
         split = text.split("\n", 2)
-        if len(split) not in (2, 3):
-            return web.Response(status=400)
+        if len(split) not in (2, 3): return web.Response(status=400)
 
-        code = split[0]
-        phone = parse_phone(split[1])
+        code, phone = split[0], parse_phone(split[1])
         password = split[2] if len(split) > 2 else None
 
-        if (
-            (len(code) != 5 and not password)
-            or any(c not in string.digits for c in code)
-            or not phone
-        ):
+        if (len(code) != 5 and not password) or any(c not in string.digits for c in code) or not phone:
             return web.Response(status=400)
-        
-        # <<< ИСПРАВЛЕНИЕ: Гарантируем подключение >>>
+
         await self._pending_client.connect()
 
-        if not password:
-            try:
+        try:
+            if not password:
                 await self._pending_client.sign_in(phone, code=code)
-            except SessionPasswordNeededError:
-                return web.Response(status=401, body="2FA Password required")
-            except PhoneCodeExpiredError:
-                return web.Response(status=404, body="Code expired")
-            except PhoneCodeInvalidError:
-                return web.Response(status=403, body="Invalid code")
-            except FloodWaitError as e:
-                return web.Response(status=421, body=(self._render_fw_error(e)))
-        else:
-            try:
+            else:
                 await self._pending_client.sign_in(phone, password=password)
-            except PasswordHashInvalidError:
-                return web.Response(status=403, body="Invalid 2FA password")
-            except FloodWaitError as e:
-                return web.Response(status=421, body=(self._render_fw_error(e)))
-        
-        await main.heroku.save_client_session(self._pending_client, delay_restart=True)
+        except SessionPasswordNeededError:
+            return web.Response(status=401, body="2FA Password required")
+        except (PhoneCodeExpiredError, PhoneCodeInvalidError, PasswordHashInvalidError) as e:
+            body = "Code expired" if isinstance(e, PhoneCodeExpiredError) else "Invalid code" if isinstance(e, PhoneCodeInvalidError) else "Invalid 2FA password"
+            return web.Response(status=403, body=body)
+        except FloodWaitError as e:
+            return web.Response(status=421, body=self._render_fw_error(e))
+        except Exception as e:
+            logging.error("Sign in failed", exc_info=True)
+            return web.Response(status=500, body=str(e))
+
+        await self._save_new_session(self._pending_client)
         return web.Response(status=200, body="SUCCESS")
+    # <<< КОНЕЦ ИЗМЕНЕНИЙ >>>
+
 
     async def finish_login(self, request: web.Request) -> web.Response:
         if not self._check_session(request):
             return web.Response(status=401)
 
         if not self._pending_client:
-            return web.Response(status=400)
+            # This can happen if the user reloads the page after a successful login
+            # before the restart completes. It's safe to just restart.
+            if not main.heroku.clients: # Only restart if it's the very first login
+                logging.info("Restarting after page reload...")
+                restart()
+            return web.Response(body="OK, already processing")
 
         first_session = not bool(main.heroku.clients)
 
