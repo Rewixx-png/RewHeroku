@@ -331,6 +331,11 @@ class Help(loader.Module):
         core_.sort(key=extract_name)
         no_commands_.sort(key=extract_name)
 
+        # <<< НАЧАЛО ИСПРАВЛЕНИЯ >>>
+        # Ищем модуль по его настоящему имени класса 'LoaderMod'
+        loader_instance = self.lookup("LoaderMod")
+        # <<< КОНЕЦ ИСПРАВЛЕНИЯ >>>
+
         await utils.answer(
             message,
             (self.config["desc_icon"] + " {}\n <blockquote expandable>{}</blockquote><blockquote expandable>{}</blockquote><blockquote expandable>{}</blockquote>").format(
@@ -339,7 +344,8 @@ class Help(loader.Module):
                 "".join(plain_ + (no_commands_ if force else [])),
                 (
                     ""
-                    if self.lookup("Loader").fully_loaded
+                    # Проверяем, что экземпляр найден, перед тем как обращаться к его атрибуту
+                    if loader_instance and loader_instance.fully_loaded
                     else f"\n\n{self.strings('partial_load')}"
                 ),
             ),
