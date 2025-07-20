@@ -24,15 +24,16 @@ import logging
 import os
 import re
 import sys
+import time
 import typing
 from functools import wraps
 from pathlib import Path
 from types import FunctionType
 from uuid import uuid4
 
+import requests
 from herokutl.tl.tlobject import TLObject
 
-# <<< НАЧАЛО ИСПРАВЛЕНИЯ >>>
 from .. import security, utils, validators
 from ..database import Database
 from ..inline.core import InlineManager
@@ -57,8 +58,6 @@ from ..types import (
     get_commands,
     get_inline_handlers,
 )
-# <<< КОНЕЦ ИСПРАВЛЕНИЯ >>>
-
 
 __all__ = [
     "Modules",
@@ -743,7 +742,7 @@ class Modules:
 
     @property
     def _remove_core_protection(self) -> bool:
-        from .. import main
+        from . import main
 
         return self._db.get(main.__name__, "remove_core_protection", False)
 
@@ -884,7 +883,7 @@ class Modules:
 
     def get_prefix(self) -> str:
         """Get command prefix"""
-        from .. import main
+        from . import main
 
         key = main.__name__
         default = "."

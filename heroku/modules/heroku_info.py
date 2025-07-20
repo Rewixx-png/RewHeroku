@@ -12,13 +12,13 @@
 
 import git
 import time
-import git
 import psutil
 import os
 import glob
 import requests
 import re
 import emoji
+import asyncio
 
 from bs4 import BeautifulSoup
 from typing import Optional
@@ -30,6 +30,7 @@ from herokutl.utils import get_display_name
 from .. import loader, utils, version
 import platform as lib_platform
 import getpass
+
 
 @loader.tds
 class HerokuInfoMod(loader.Module):
@@ -43,13 +44,11 @@ class HerokuInfoMod(loader.Module):
                 "custom_message",
                 doc=lambda: self.strings("_cfg_cst_msg"),
             ),
-
             loader.ConfigValue(
                 "banner_url",
                 "https://raw.githubusercontent.com/coddrago/assets/refs/heads/main/heroku/heroku_info.png",
                 lambda: self.strings("_cfg_banner"),
             ),
-
             loader.ConfigValue(
                 "show_heroku",
                 True,
@@ -274,35 +273,46 @@ class HerokuInfoMod(loader.Module):
     @loader.command()
     async def infocmd(self, message: Message):
         start = time.perf_counter_ns()
+        
         if self.config['switchInfo']:
             if self._get_info_photo(start) is None:
-                await utils.answer(
-                    message, 
-                    self.strings["incorrect_img_format"]
-                )
+                await utils.answer(message, self.strings["incorrect_img_format"])
                 return
-           
             await utils.answer_file(
                 message,
                 self._get_info_photo(start),
                 reply_to=getattr(message, "reply_to_msg_id", None),
             )
-        elif self.config["custom_message"] is None:
-            await utils.answer(
-                message,
-                self._render_info(start),
-                file = self.config["banner_url"],
-                reply_to=getattr(message, "reply_to_msg_id", None),
+            return
+        
+        text = self._render_info(start)
+        kwargs = {
+            "file": self.config["banner_url"],
+            "reply_to": getattr(message, "reply_to_msg_id", None),
+        }
+
+        # <<< НАЧАЛО ИСПРАВЛЕНИЯ >>>
+        if self.config["custom_message"] and '{ping}' in self.config["custom_message"]:
+            # 1. Отправляем временное сообщение, чтобы замерить пинг
+            placeholder = await utils.answer(message, self.config["ping_emoji"])
+            await asyncio.sleep(0.5) # Даем Telegram время обработать
+            
+            # 2. Удаляем временное сообщение
+            await placeholder.delete()
+            
+            # 3. Отправляем финальное сообщение с картинкой как новое сообщение
+            # Мы используем message.peer_id и reply_to от ОРИГИНАЛЬНОГО .info сообщения
+            await self._client.send_file(
+                message.peer_id,
+                file=kwargs["file"],
+                caption=text,
+                reply_to=kwargs["reply_to"],
+                link_preview=False,
             )
         else:
-            if '{ping}' in self.config["custom_message"]:
-                message = await utils.answer(message, self.config["ping_emoji"])
-            await utils.answer(
-                message,
-                self._render_info(start),
-                file = self.config["banner_url"],
-                reply_to=getattr(message, "reply_to_msg_id", None),
-            )
+            # Если {ping} не нужен, просто редактируем, как и раньше
+            await utils.answer(message, text, **kwargs)
+        # <<< КОНЕЦ ИСПРАВЛЕНИЯ >>>
 
     @loader.command()
     async def herokuinfo(self, message: Message):
@@ -315,4 +325,3 @@ class HerokuInfoMod(loader.Module):
 
         self.config["custom_message"] = args
         await utils.answer(message, self.strings("setinfo_success"))
-
