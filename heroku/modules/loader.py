@@ -32,6 +32,9 @@ from uuid import uuid4
 
 from herokutl.tl.tlobject import TLObject
 
+# <<< ИСПРАВЛЕНИЕ ЗДЕСЬ: Добавляем явный импорт для решения NameError >>>
+from .. import loader
+
 from . import security, utils, validators
 from .database import Database
 from .inline.core import InlineManager
@@ -56,9 +59,6 @@ from .types import (
     get_commands,
     get_inline_handlers,
 )
-
-# Это исправление для NameError
-from .. import loader
 
 __all__ = [
     "Modules",
