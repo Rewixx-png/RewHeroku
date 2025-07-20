@@ -930,9 +930,6 @@ def get_named_platform() -> str:
     if main.IS_JAMHOST:
         return "🧃 JamHost"
 
-    if main.IS_REWHOST:
-        return "🚀 RewHost"
-
     if main.IS_USERLAND:
         return "🐧 UserLand"
 
@@ -942,10 +939,13 @@ def get_named_platform() -> str:
     if main.IS_HIKKAHOST:
         return "🌼 HikkaHost"
 
+    if main.IS_REWHOST:
+         return f"🚀 RewHost {os.environ.get('REWHOSTt', '')}"
+
     if main.IS_DOCKER:
         return "🐳 Docker"
 
-    return f"✌️ lavHost {os.environ['LAVHOST']}" if main.IS_LAVHOST else "💎 VDS"
+    return  "💎 VDS"
 
 
 def get_platform_emoji() -> str:
