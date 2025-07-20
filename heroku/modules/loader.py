@@ -12,131 +12,525 @@
 # You can redistribute it and/or modify it under the terms of the GNU AGPLv3
 # 🔑 https://www.gnu.org/licenses/agpl-3.0.html
 
-import ast
 import asyncio
+import builtins
 import contextlib
-import difflib
-import functools
+import copy
 import importlib
+import importlib.machinery
+import importlib.util
 import inspect
-import io
 import logging
 import os
 import re
-import shutil
 import sys
-import time
 import typing
-import uuid
-from collections import ChainMap
-from importlib.machinery import ModuleSpec
-from urllib.parse import urlparse
+from functools import wraps
+from pathlib import Path
+from types import FunctionType
+from uuid import uuid4
 
-import requests
-from herokutl.errors.common import ScamDetectionError
-from herokutl.errors.rpcerrorlist import MediaCaptionTooLongError
-from herokutl.tl.functions.channels import JoinChannelRequest
-from herokutl.tl.types import Channel, Message, PeerUser
+from herokutl.tl.tlobject import TLObject
 
-from .. import loader, main, utils
-from .._local_storage import RemoteStorage
-from ..compat import geek
-from ..inline.types import InlineCall
-from ..types import CoreOverwriteError, CoreUnloadError
+from . import security, utils, validators
+from .database import Database
+from .inline.core import InlineManager
+from .translations import Strings, Translator
+from .types import (
+    Command,
+    ConfigValue,
+    CoreOverwriteError,
+    CoreUnloadError,
+    InlineMessage,
+    JSONSerializable,
+    Library,
+    LibraryConfig,
+    LoadError,
+    Module,
+    ModuleConfig,
+    SelfSuspend,
+    SelfUnload,
+    StopLoop,
+    StringLoader,
+    get_callback_handlers,
+    get_commands,
+    get_inline_handlers,
+)
+
+# Это исправление для NameError
+from .. import loader
+
+__all__ = [
+    "Modules",
+    "InfiniteLoop",
+    "Command",
+    "CoreOverwriteError",
+    "CoreUnloadError",
+    "InlineMessage",
+    "JSONSerializable",
+    "Library",
+    "LibraryConfig",
+    "LoadError",
+    "Module",
+    "SelfSuspend",
+    "SelfUnload",
+    "StopLoop",
+    "StringLoader",
+    "get_commands",
+    "get_inline_handlers",
+    "get_callback_handlers",
+    "validators",
+    "Database",
+    "InlineManager",
+    "Strings",
+    "Translator",
+    "ConfigValue",
+    "ModuleConfig",
+    "owner",
+    "group_owner",
+    "group_admin_add_admins",
+    "group_admin_change_info",
+    "group_admin_ban_users",
+    "group_admin_delete_messages",
+    "group_admin_pin_messages",
+    "group_admin_invite_users",
+    "group_admin",
+    "group_member",
+    "pm",
+    "unrestricted",
+    "inline_everyone",
+    "loop",
+]
 
 logger = logging.getLogger(__name__)
 
+owner = security.owner
 
-class FakeOne:
-    def __eq__(self, other):
-        return other == -1 or isinstance(other, FakeOne)
+# deprecated
+sudo = security.sudo
+support = security.support
+# /deprecated
 
-    def __bool__(self):
-        return False
+group_owner = security.group_owner
+group_admin_add_admins = security.group_admin_add_admins
+group_admin_change_info = security.group_admin_change_info
+group_admin_ban_users = security.group_admin_ban_users
+group_admin_delete_messages = security.group_admin_delete_messages
+group_admin_pin_messages = security.group_admin_pin_messages
+group_admin_invite_users = security.group_admin_invite_users
+group_admin = security.group_admin
+group_member = security.group_member
+pm = security.pm
+unrestricted = security.unrestricted
+inline_everyone = security.inline_everyone
 
 
-MODULE_LOADING_FORBIDDEN = FakeOne()
-MODULE_LOADING_FAILED = 0
-MODULE_LOADING_SUCCESS = 1
+async def stop_placeholder() -> bool:
+    return True
 
 
-@loader.tds
-class LoaderMod(loader.Module):
-    """Loads modules"""
+class Placeholder:
+    """Placeholder"""
 
-    strings = {"name": "Loader"}
 
-    def __init__(self):
-        self.fully_loaded = False
-        self._links_cache = {}
-        self._storage: RemoteStorage = None
+VALID_PIP_PACKAGES = re.compile(
+    r"^\s*# ?requires:(?: ?)((?:{url} )*(?:{url}))\s*$".format(
+        url=r"[-[\]_.~:/?#@!$&'()*+,;%<=>a-zA-Z0-9]+"
+    ),
+    re.MULTILINE,
+)
 
-        self.config = loader.ModuleConfig(
-            loader.ConfigValue(
-                "MODULES_REPO",
-                "https://raw.githubusercontent.com/coddrago/modules/main",
-                lambda: self.strings("repo_config_doc"),
-                validator=loader.validators.Link(),
-            ),
-            loader.ConfigValue(
-                "ADDITIONAL_REPOS",
-                [],
-                lambda: self.strings("add_repo_config_doc"),
-                validator=loader.validators.Series(validator=loader.validators.Link()),
-            ),
-            loader.ConfigValue(
-                "share_link",
-                doc=lambda: self.strings("share_link_doc"),
-                validator=loader.validators.Boolean(),
-            ),
-            loader.ConfigValue(
-                "basic_auth",
-                None,
-                lambda: self.strings("basic_auth_doc"),
-                validator=loader.validators.Hidden(
-                    loader.validators.RegExp(r"^.*:.*$")
-                ),
-            ),
-            loader.ConfigValue(
-                "command_emoji",
-                "<emoji document_id=5197195523794157505>▫️</emoji>",
-                lambda: "Emoji for command",
-            ),
-        )
+USER_INSTALL = "PIP_TARGET" not in os.environ and "VIRTUAL_ENV" not in os.environ
 
-    async def _async_init(self):
-        modules = list(
-            filter(
-                lambda x: not x.startswith(
-                    "https://raw.githubusercontent.com/coddrago/modules/main"
-                ),
-                utils.array_sum(
-                    map(
-                        lambda x: list(x.values()),
-                        (await self.get_repo_list()).values(),
-                    )
-                ),
+native_import = builtins.__import__
+
+
+def patched_import(name: str, *args, **kwargs):
+    if name.startswith("telethon"):
+        return native_import("herokutl" + name[8:], *args, **kwargs)
+    elif name.startswith("hikkatl"):
+        return native_import("herokutl" + name[7:], *args, **kwargs)
+    elif name.startswith ("hikka"):
+        return native_import("heroku" + name[5:], *args, **kwargs)
+
+    return native_import(name, *args, **kwargs)
+
+
+builtins.__import__ = patched_import
+
+
+class InfiniteLoop:
+    _task = None
+    status = False
+    module_instance = None  # Will be passed later
+
+    def __init__(
+        self,
+        func: FunctionType,
+        interval: int,
+        autostart: bool,
+        wait_before: bool,
+        stop_clause: typing.Union[str, None],
+    ):
+        self.func = func
+        self.interval = interval
+        self._wait_before = wait_before
+        self._stop_clause = stop_clause
+        self.autostart = autostart
+
+    def _stop(self, *args, **kwargs):
+        self._wait_for_stop.set()
+
+    def stop(self, *args, **kwargs):
+        with contextlib.suppress(AttributeError):
+            _heroku_client_id_logging_tag = copy.copy(  # noqa: F841
+                self.module_instance.allmodules.client.tg_id
             )
+
+        if self._task:
+            logger.debug("Stopped loop for method %s", self.func)
+            self._wait_for_stop = asyncio.Event()
+            self.status = False
+            self._task.add_done_callback(self._stop)
+            self._task.cancel()
+            return asyncio.ensure_future(self._wait_for_stop.wait())
+
+        logger.debug("Loop is not running")
+        return asyncio.ensure_future(stop_placeholder())
+
+    def start(self, *args, **kwargs):
+        with contextlib.suppress(AttributeError):
+            _heroku_client_id_logging_tag = copy.copy(  # noqa: F841
+                self.module_instance.allmodules.client.tg_id
+            )
+
+        if not self._task:
+            logger.debug("Started loop for method %s", self.func)
+            self._task = asyncio.ensure_future(self.actual_loop(*args, **kwargs))
+        else:
+            logger.debug("Attempted to start already running loop")
+
+    async def actual_loop(self, *args, **kwargs):
+        # Wait for loader to set attribute
+        while not self.module_instance:
+            await asyncio.sleep(0.01)
+
+        if isinstance(self._stop_clause, str) and self._stop_clause:
+            self.module_instance.set(self._stop_clause, True)
+
+        self.status = True
+
+        while self.status:
+            if self._wait_before:
+                await asyncio.sleep(self.interval)
+
+            if (
+                isinstance(self._stop_clause, str)
+                and self._stop_clause
+                and not self.module_instance.get(self._stop_clause, False)
+            ):
+                break
+
+            try:
+                await self.func(self.module_instance, *args, **kwargs)
+            except StopLoop:
+                break
+            except Exception:
+                logger.exception("Error running loop!")
+
+            if not self._wait_before:
+                await asyncio.sleep(self.interval)
+
+        self._wait_for_stop.set()
+
+        self.status = False
+
+    def __del__(self):
+        self.stop()
+
+
+def loop(
+    interval: int = 5,
+    autostart: typing.Optional[bool] = False,
+    wait_before: typing.Optional[bool] = False,
+    stop_clause: typing.Optional[str] = None,
+) -> FunctionType:
+    """
+    Create new infinite loop from class method
+    :param interval: Loop iterations delay
+    :param autostart: Start loop once module is loaded
+    :param wait_before: Insert delay before actual iteration, rather than after
+    :param stop_clause: Database key, based on which the loop will run.
+                       This key will be set to `True` once loop is started,
+                       and will stop after key resets to `False`
+    :attr status: Boolean, describing whether the loop is running
+    """
+
+    def wrapped(func):
+        return InfiniteLoop(func, interval, autostart, wait_before, stop_clause)
+
+    return wrapped
+
+
+MODULES_NAME = "modules"
+ru_keys = 'ёйцукенгшщзхъфывапролджэячсмитьбю.Ё"№;%:?ЙЦУКЕНГШЩЗХЪФЫВАПРОЛДЖЭ/ЯЧСМИТЬБЮ,'
+en_keys = "`qwertyuiop[]asdfghjkl;'zxcvbnm,./~@#$%^&QWERTYUIOP{}ASDFGHJKL:\"|ZXCVBNM<>?"
+
+BASE_DIR = (
+    "/data"
+    if "DOCKER" in os.environ
+    else os.path.normpath(os.path.join(utils.get_base_dir(), ".."))
+)
+
+LOADED_MODULES_DIR = os.path.join(BASE_DIR, "loaded_modules")
+LOADED_MODULES_PATH = Path(LOADED_MODULES_DIR)
+LOADED_MODULES_PATH.mkdir(parents=True, exist_ok=True)
+
+
+def translatable_docstring(cls):
+    """Decorator that makes triple-quote docstrings translatable"""
+
+    @wraps(cls.config_complete)
+    def config_complete(self, *args, **kwargs):
+        def proccess_decorators(mark: str, obj: str):
+            nonlocal self
+            for attr in dir(func_):
+                if (
+                    attr.endswith("_doc")
+                    and len(attr) == 6
+                    and isinstance(getattr(func_, attr), str)
+                ):
+                    var = f"strings_{attr.split('_')[0]}"
+                    if not hasattr(self, var):
+                        setattr(self, var, {})
+
+                    getattr(self, var).setdefault(f"{mark}{obj}", getattr(func_, attr))
+
+        for command_, func_ in get_commands(cls).items():
+            proccess_decorators("_cmd_doc_", command_)
+            try:
+                func_.__doc__ = self.strings[f"_cmd_doc_{command_}"]
+            except AttributeError:
+                func_.__func__.__doc__ = self.strings[f"_cmd_doc_{command_}"]
+
+        for inline_handler_, func_ in get_inline_handlers(cls).items():
+            proccess_decorators("_ihandle_doc_", inline_handler_)
+            try:
+                func_.__doc__ = self.strings[f"_ihandle_doc_{inline_handler_}"]
+            except AttributeError:
+                func_.__func__.__doc__ = self.strings[f"_ihandle_doc_{inline_handler_}"]
+
+        self.__doc__ = self.strings["_cls_doc"]
+
+        return (
+            self.config_complete._old_(self, *args, **kwargs)
+            if not kwargs.pop("reload_dynamic_translate", None)
+            else True
         )
-        logger.debug("Modules: %s", modules)
-        asyncio.ensure_future(self._storage.preload(modules))
 
-    async def client_ready(self):
-        while not (settings := self.lookup("settings")):
-            await asyncio.sleep(0.5)
+    config_complete._old_ = cls.config_complete
+    cls.config_complete = config_complete
 
-        self._storage = RemoteStorage(self._client)
+    for command_, func in get_commands(cls).items():
+        cls.strings[f"_cmd_doc_{command_}"] = inspect.getdoc(func)
 
-        self.allmodules.add_aliases(settings.get("aliases", {}))
+    for inline_handler_, func in get_inline_handlers(cls).items():
+        cls.strings[f"_ihandle_doc_{inline_handler_}"] = inspect.getdoc(func)
 
-        main.heroku.ready.set()
+    cls.strings["_cls_doc"] = inspect.getdoc(cls)
 
-        asyncio.ensure_future(self._update_modules())
-        asyncio.ensure_future(self._async_init())
+    return cls
+
+
+tds = translatable_docstring  # Shorter name for modules to use
+
+
+def ratelimit(func: Command) -> Command:
+    """Decorator that causes ratelimiting for this command to be enforced more strictly"""
+    func.ratelimit = True
+    return func
+
+
+def tag(*tags, **kwarg_tags):
+    """
+    Tag function (esp. watchers) with some tags
+    Currently available tags:
+        • `no_commands` - Ignore all userbot commands in watcher
+        • `only_commands` - Capture only userbot commands in watcher
+        • `out` - Capture only outgoing events
+        • `in` - Capture only incoming events
+        • `only_messages` - Capture only messages (not join events)
+        • `editable` - Capture only messages, which can be edited (no forwards etc.)
+        • `no_media` - Capture only messages without media and files
+        • `only_media` - Capture only messages with media and files
+        • `only_photos` - Capture only messages with photos
+        • `only_videos` - Capture only messages with videos
+        • `only_audios` - Capture only messages with audios
+        • `only_docs` - Capture only messages with documents
+        • `only_stickers` - Capture only messages with stickers
+        • `only_inline` - Capture only messages with inline queries
+        • `only_channels` - Capture only messages with channels
+        • `only_groups` - Capture only messages with groups
+        • `only_pm` - Capture only messages with private chats
+        • `no_pm` - Exclude messages with private chats
+        • `no_channels` - Exclude messages with channels
+        • `no_groups` - Exclude messages with groups
+        • `no_inline` - Exclude messages with inline queries
+        • `no_stickers` - Exclude messages with stickers
+        • `no_docs` - Exclude messages with documents
+        • `no_audios` - Exclude messages with audios
+        • `no_videos` - Exclude messages with videos
+        • `no_photos` - Exclude messages with photos
+        • `no_forwards` - Exclude forwarded messages
+        • `no_reply` - Exclude messages with replies
+        • `no_mention` - Exclude messages with mentions
+        • `mention` - Capture only messages with mentions
+        • `only_reply` - Capture only messages with replies
+        • `only_forwards` - Capture only forwarded messages
+        • `startswith` - Capture only messages that start with given text
+        • `endswith` - Capture only messages that end with given text
+        • `contains` - Capture only messages that contain given text
+        • `regex` - Capture only messages that match given regex
+        • `filter` - Capture only messages that pass given function
+        • `from_id` - Capture only messages from given user
+        • `chat_id` - Capture only messages from given chat
+        • `thumb_url` - Works for inline command handlers. Will be shown in help
+        • `alias` - Set single alias for a command
+        • `aliases` - Set multiple aliases for a command
+
+    Usage example:
+
+    @loader.tag("no_commands", "out")
+    @loader.tag("no_commands", out=True)
+    @loader.tag(only_messages=True)
+    @loader.tag("only_messages", "only_pm", regex=r"^[.] ?heroku$", from_id=659800858)
+
+    💡 These tags can be used directly in `@loader.watcher`:
+    @loader.watcher("no_commands", out=True)
+    """
+
+    def inner(func: Command) -> Command:
+        for _tag in tags:
+            setattr(func, _tag, True)
+
+        for _tag, value in kwarg_tags.items():
+            setattr(func, _tag, value)
+
+        return func
+
+    return inner
+
+
+def _mark_method(mark: str, *args, **kwargs) -> typing.Callable[..., Command]:
+    """
+    Mark method as a method of a class
+    """
+
+    def decorator(func: Command) -> Command:
+        setattr(func, mark, True)
+        for arg in args:
+            setattr(func, arg, True)
+
+        for kwarg, value in kwargs.items():
+            setattr(func, kwarg, value)
+
+        return func
+
+    return decorator
+
+
+def command(*args, **kwargs):
+    """
+    Decorator that marks function as userbot command
+    """
+    return _mark_method("is_command", *args, **kwargs)
+
+
+def debug_method(*args, **kwargs):
+    """
+    Decorator that marks function as IDM (Internal Debug Method)
+    :param name: Name of the method
+    """
+    return _mark_method("is_debug_method", *args, **kwargs)
+
+
+def inline_handler(*args, **kwargs):
+    """
+    Decorator that marks function as inline handler
+    """
+    return _mark_method("is_inline_handler", *args, **kwargs)
+
+
+def watcher(*args, **kwargs):
+    """
+    Decorator that marks function as watcher
+    """
+    return _mark_method("is_watcher", *args, **kwargs)
+
+
+def callback_handler(*args, **kwargs):
+    """
+    Decorator that marks function as callback handler
+    """
+    return _mark_method("is_callback_handler", *args, **kwargs)
+
+
+def raw_handler(*updates: TLObject):
+    """
+    Decorator that marks function as raw telethon events handler
+    Use it to prevent zombie-event-handlers, left by unloaded modules
+    :param updates: Update(-s) to handle
+    ⚠️ Do not try to simulate behavior of this decorator by yourself!
+    ⚠️ This feature won't work, if you dynamically declare method with decorator!
+    """
+
+    def inner(func: Command) -> Command:
+        func.is_raw_handler = True
+        func.updates = updates
+        func.id = uuid4().hex
+        return func
+
+    return inner
+
+
+class Modules:
+    """Stores all registered modules"""
+
+    def __init__(
+        self,
+        client: "CustomTelegramClient",  # type: ignore  # noqa: F821
+        db: Database,
+        allclients: list,
+        translator: Translator,
+    ):
+        self._initial_registration = True
+        self.commands = {}
+        self.inline_handlers = {}
+        self.callback_handlers = {}
+        self.aliases = {}
+        self.modules = []  # skipcq: PTC-W0052
+        self.libraries = []
+        self.watchers = []
+        self._log_handlers = []
+        self._core_commands = []
+        self.__approve = []
+        self.allclients = allclients
+        self.client = client
+        self._db = db
+        self.db = db
+        self.translator = translator
+        self.secure_boot = False
+        self.autosaver_paused = False  # Флаг для приостановки автосохранения
+        asyncio.ensure_future(self._junk_collector())
+        self.inline = InlineManager(self.client, self._db, self)
+        self.client.heroku_inline = self.inline
 
     @loader.loop(interval=3, wait_before=True, autostart=True)
     async def _config_autosaver(self):
-        for mod in self.allmodules.modules:
+        if self.autosaver_paused:
+            return
+        
+        for mod in self.modules:
             if (
                 not hasattr(mod, "config")
                 or not mod.config
@@ -151,7 +545,7 @@ class LoaderMod(loader.Module):
                 delattr(mod.config._config[option], "_save_marker")
                 mod.pointer("__config__", {})[option] = config.value
 
-        for lib in self.allmodules.libraries:
+        for lib in self.libraries:
             if (
                 not hasattr(lib, "config")
                 or not lib.config
@@ -168,1226 +562,675 @@ class LoaderMod(loader.Module):
 
         self._db.save()
 
-    def update_modules_in_db(self):
-        if self.allmodules.secure_boot:
-            return
+    async def _junk_collector(self):
+        """
+        Periodically reloads commands, inline handlers, callback handlers and watchers from loaded
+        modules to prevent zombie handlers
+        """
+        while True:
+            await asyncio.sleep(30)
+            commands = {}
+            inline_handlers = {}
+            callback_handlers = {}
+            watchers = []
+            for module in self.modules:
+                commands.update(module.heroku_commands)
+                inline_handlers.update(module.heroku_inline_handlers)
+                callback_handlers.update(module.heroku_callback_handlers)
+                watchers.extend(module.heroku_watchers.values())
 
-        self.set(
-            "loaded_modules",
-            {
-                **{
-                    module.__class__.__name__: module.__origin__
-                    for module in self.allmodules.modules
-                    if module.__origin__.startswith("http")
-                },
-            },
-        )
+            self.commands = commands
+            self.inline_handlers = inline_handlers
+            self.callback_handlers = callback_handlers
+            self.watchers = watchers
 
-    @loader.command(alias="dlm")
-    async def dlmod(self, message: Message, force_pm: bool = False):
-        if args := utils.get_args(message):
-            args = args[0]
-
-            await utils.answer(
-                message, self.strings("finding_module_in_repos")
-            )
-
-            if (
-                await self.download_and_install(args, message, force_pm)
-                == MODULE_LOADING_FORBIDDEN
-            ):
-                return
-
-            if self.fully_loaded:
-                self.update_modules_in_db()
-        else:
-            await self.inline.list(
-                message,
-                [
-                    self.strings("avail_header")
-                    + f"\n☁️ {repo.strip('/')}\n\n"
-                    + "\n".join(
-                        [
-                            " | ".join(chunk)
-                            for chunk in utils.chunks(
-                                [
-                                    f"<code>{i}</code>"
-                                    for i in sorted(
-                                        [
-                                            utils.escape_html(
-                                                i.split("/")[-1].split(".")[0]
-                                            )
-                                            for i in mods.values()
-                                        ]
-                                    )
-                                ],
-                                5,
-                            )
-                        ]
-                    )
-                    for repo, mods in (await self.get_repo_list()).items()
-                ],
-            )
-
-    async def _get_modules_to_load(self):
-        todo = self.get("loaded_modules", {})
-        logger.debug("Loading modules: %s", todo)
-        return todo
-
-    async def _get_repo(self, repo: str) -> str:
-        repo = repo.strip("/")
-
-        if self._links_cache.get(repo, {}).get("exp", 0) >= time.time():
-            return self._links_cache[repo]["data"]
-
-        res = await utils.run_sync(
-            requests.get,
-            f"{repo}/full.txt",
-            auth=(
-                tuple(self.config["basic_auth"].split(":", 1))
-                if self.config["basic_auth"]
-                else None
-            ),
-        )
-
-        if not str(res.status_code).startswith("2"):
             logger.debug(
-                "Can't load repo %s contents because of %s status code",
-                repo,
-                res.status_code,
+                (
+                    "Reloaded %s commands,"
+                    " %s inline handlers,"
+                    " %s callback handlers and"
+                    " %s watchers"
+                ),
+                len(self.commands),
+                len(self.inline_handlers),
+                len(self.callback_handlers),
+                len(self.watchers),
             )
-            return []
 
-        self._links_cache[repo] = {
-            "exp": time.time() + 5 * 60,
-            "data": [link for link in res.text.strip().splitlines() if link],
-        }
-
-        return self._links_cache[repo]["data"]
-
-    async def get_repo_list(
+    async def register_all(
         self,
-        only_primary: bool = False,
-    ) -> dict:
-        return {
-            repo: {
-                f"Mod/{repo_id}/{i}": f'{repo.strip("/")}/{link}.py'
-                for i, link in enumerate(set(await self._get_repo(repo)))
-            }
-            for repo_id, repo in enumerate(
-                [self.config["MODULES_REPO"]]
-                + ([] if only_primary else self.config["ADDITIONAL_REPOS"])
+        mods: typing.Optional[typing.List[str]] = None,
+        no_external: bool = False,
+    ) -> typing.List[Module]:
+        """Load all modules in the module directory"""
+        external_mods = []
+
+        if not mods:
+            mods = [
+                os.path.join(utils.get_base_dir(), MODULES_NAME, mod)
+                for mod in filter(
+                    lambda x: (x.endswith(".py") and not x.startswith("_")),
+                    os.listdir(os.path.join(utils.get_base_dir(), MODULES_NAME)),
+                )
+            ]
+
+            self.secure_boot = self._db.get(__name__, "secure_boot", False)
+
+            external_mods = (
+                []
+                if self.secure_boot
+                else [
+                    (LOADED_MODULES_PATH / mod).resolve()
+                    for mod in filter(
+                        lambda x: (
+                            x.endswith(f"{self.client.tg_id}.py")
+                            and not x.startswith("_")
+                        ),
+                        os.listdir(LOADED_MODULES_DIR),
+                    )
+                ]
             )
-            if repo.startswith("http")
-        }
 
-    async def get_links_list(self) -> typing.List[str]:
-        links = await self.get_repo_list()
-        main_repo = list(links.pop(self.config["MODULES_REPO"]).values())
-        return main_repo + list(dict(ChainMap(*list(links.values()))).values())
+        loaded = []
+        loaded += await self._register_modules(mods)
 
-    async def _find_link(self, module_name: str) -> typing.Union[str, bool]:
+        if not no_external:
+            loaded += await self._register_modules(external_mods, "<file>")
+
+        return loaded
+
+    async def _register_modules(
+        self,
+        modules: list,
+        origin: str = "<core>",
+    ) -> typing.List[Module]:
+        with contextlib.suppress(AttributeError):
+            _heroku_client_id_logging_tag = copy.copy(self.client.tg_id)  # noqa: F841
+
+        loaded = []
+
+        for mod in modules:
+            try:
+                mod_shortname = os.path.basename(mod).rsplit(".py", maxsplit=1)[0]
+                module_name = f"{__package__}.{MODULES_NAME}.{mod_shortname}"
+                user_friendly_origin = (
+                    "<core {}>" if origin == "<core>" else "<file {}>"
+                ).format(module_name)
+
+                logger.debug("Loading %s from filesystem", module_name)
+
+                spec = importlib.machinery.ModuleSpec(
+                    module_name,
+                    StringLoader(Path(mod).read_text(encoding='utf-8'), user_friendly_origin),
+                    origin=user_friendly_origin,
+                )
+
+                loaded += [await self.register_module(spec, module_name, origin)]
+            except Exception as e:
+                logger.exception("Failed to load module %s due to %s:", mod, e)
+
+        return loaded
+
+    async def register_module(
+        self,
+        spec: importlib.machinery.ModuleSpec,
+        module_name: str,
+        origin: str = "<core>",
+        save_fs: bool = False,
+    ) -> Module:
+        """Register single module from importlib spec"""
+        with contextlib.suppress(AttributeError):
+            _heroku_client_id_logging_tag = copy.copy(self.client.tg_id)  # noqa: F841
+
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        spec.loader.exec_module(module)
+
+        ret = None
+
+        ret = next(
+            (
+                value()
+                for value in vars(module).values()
+                if inspect.isclass(value) and issubclass(value, Module)
+            ),
+            None,
+        )
+
+        if hasattr(module, "__version__"):
+            ret.__version__ = module.__version__
+
+        if ret is None:
+            ret = module.register(module_name)
+            if not isinstance(ret, Module):
+                raise TypeError(f"Instance is not a Module, it is {type(ret)}")
+
+        await self.complete_registration(ret)
+        ret.__origin__ = origin
+
+        cls_name = ret.__class__.__name__
+
+        if save_fs:
+            path = os.path.join(
+                LOADED_MODULES_DIR,
+                f"{cls_name}_{self.client.tg_id}.py",
+            )
+
+            if origin == "<string>":
+                Path(path).write_text(spec.loader.data.decode())
+
+                logger.debug("Saved class %s to path %s", cls_name, path)
+
+        return ret
+
+    def add_aliases(self, aliases: dict):
+        """Saves aliases and applies them to <core>/<file> modules"""
+        self.aliases.update(aliases)
+        for alias, cmd in aliases.items():
+            self.add_alias(alias, cmd)
+
+    def register_raw_handlers(self, instance: Module):
+        """Register event handlers for a module"""
+        for name, handler in utils.iter_attrs(instance):
+            if getattr(handler, "is_raw_handler", False):
+                self.client.dispatcher.raw_handlers.append(handler)
+                logger.debug(
+                    "Registered raw handler %s for %s. ID: %s",
+                    name,
+                    instance.__class__.__name__,
+                    handler.id,
+                )
+
+    @property
+    def _remove_core_protection(self) -> bool:
+        from . import main
+
+        return self._db.get(main.__name__, "remove_core_protection", False)
+
+    def register_commands(self, instance: Module):
+        """Register commands from instance"""
+        with contextlib.suppress(AttributeError):
+            _heroku_client_id_logging_tag = copy.copy(self.client.tg_id)  # noqa: F841
+
+        if instance.__origin__.startswith("<core"):
+            self._core_commands += list(
+                map(lambda x: x.lower(), list(instance.heroku_commands))
+            )
+
+        for _command, cmd in instance.heroku_commands.items():
+            # Restrict overwriting core modules' commands
+            if (
+                not self._remove_core_protection
+                and _command.lower() in self._core_commands
+                and not instance.__origin__.startswith("<core")
+            ):
+                with contextlib.suppress(Exception):
+                    self.modules.remove(instance)
+
+                raise CoreOverwriteError(command=_command)
+
+            self.commands.update({_command.lower(): cmd})
+
+        for alias, cmd in self.aliases.copy().items():
+            if cmd in instance.heroku_commands:
+                self.add_alias(alias, cmd)
+
+        self.register_inline_stuff(instance)
+
+    def register_inline_stuff(self, instance: Module):
+        for name, func in instance.heroku_inline_handlers.copy().items():
+            if name.lower() in self.inline_handlers:
+                if (
+                    hasattr(func, "__self__")
+                    and hasattr(self.inline_handlers[name], "__self__")
+                    and (
+                        func.__self__.__class__.__name__
+                        != self.inline_handlers[name].__self__.__class__.__name__
+                    )
+                ):
+                    logger.debug(
+                        "Duplicate inline_handler %s of %s",
+                        name,
+                        instance.__class__.__name__,
+                    )
+
+                logger.debug(
+                    "Replacing inline_handler %s for %s",
+                    self.inline_handlers[name],
+                    instance.__class__.__name__,
+                )
+
+            self.inline_handlers.update({name.lower(): func})
+
+        for name, func in instance.heroku_callback_handlers.copy().items():
+            if name.lower() in self.callback_handlers and (
+                hasattr(func, "__self__")
+                and hasattr(self.callback_handlers[name], "__self__")
+                and func.__self__.__class__.__name__
+                != self.callback_handlers[name].__self__.__class__.__name__
+            ):
+                logger.debug(
+                    "Duplicate callback_handler %s of %s",
+                    name,
+                    instance.__class__.__name__,
+                )
+
+            self.callback_handlers.update({name.lower(): func})
+
+    def unregister_inline_stuff(self, instance: Module, purpose: str):
+        for name, func in instance.heroku_inline_handlers.copy().items():
+            if name.lower() in self.inline_handlers and (
+                hasattr(func, "__self__")
+                and hasattr(self.inline_handlers[name], "__self__")
+                and func.__self__.__class__.__name__
+                == self.inline_handlers[name].__self__.__class__.__name__
+            ):
+                del self.inline_handlers[name.lower()]
+                logger.debug(
+                    "Unregistered inline_handler %s of %s for %s",
+                    name,
+                    instance.__class__.__name__,
+                    purpose,
+                )
+
+        for name, func in instance.heroku_callback_handlers.copy().items():
+            if name.lower() in self.callback_handlers and (
+                hasattr(func, "__self__")
+                and hasattr(self.callback_handlers[name], "__self__")
+                and func.__self__.__class__.__name__
+                == self.callback_handlers[name].__self__.__class__.__name__
+            ):
+                del self.callback_handlers[name.lower()]
+                logger.debug(
+                    "Unregistered callback_handler %s of %s for %s",
+                    name,
+                    instance.__class__.__name__,
+                    purpose,
+                )
+
+    def register_watchers(self, instance: Module):
+        """Register watcher from instance"""
+        with contextlib.suppress(AttributeError):
+            _heroku_client_id_logging_tag = copy.copy(self.client.tg_id)  # noqa: F841
+
+        for _watcher in self.watchers:
+            if _watcher.__self__.__class__.__name__ == instance.__class__.__name__:
+                logger.debug("Removing watcher %s for update", _watcher)
+                self.watchers.remove(_watcher)
+
+        for _watcher in instance.heroku_watchers.values():
+            self.watchers += [_watcher]
+
+    def lookup(
+        self,
+        modname: str,
+    ) -> typing.Union[bool, Module, Library]:
         return next(
-            filter(
-                lambda link: link.lower().endswith(f"/{module_name.lower()}.py"),
-                await self.get_links_list(),
+            (lib for lib in self.libraries if lib.name.lower() == modname.lower()),
+            False,
+        ) or next(
+            (
+                mod
+                for mod in self.modules
+                if mod.__class__.__name__.lower() == modname.lower()
+                or mod.name.lower() == modname.lower()
             ),
             False,
         )
 
-    async def download_and_install(
-        self,
-        module_name: str,
-        message: typing.Optional[Message] = None,
-        force_pm: bool = False,
-    ) -> int:
-        try:
-            blob_link = False
-            module_name = module_name.strip()
-            if urlparse(module_name).netloc:
-                url = module_name
-                if re.match(
-                    r"^(https:\/\/github\.com\/.*?\/.*?\/blob\/.*\.py)|"
-                    r"(https:\/\/gitlab\.com\/.*?\/.*?\/-\/blob\/.*\.py)$",
-                    url,
+    @property
+    def get_approved_channel(self):
+        return self.__approve.pop(0) if self.__approve else None
+
+    def get_prefix(self) -> str:
+        """Get command prefix"""
+        from . import main
+
+        key = main.__name__
+        default = "."
+
+        return self._db.get(key, "command_prefix", default)
+
+    async def complete_registration(self, instance: Module):
+        """Complete registration of instance"""
+        with contextlib.suppress(AttributeError):
+            _heroku_client_id_logging_tag = copy.copy(self.client.tg_id)  # noqa: F841
+
+        instance.allmodules = self
+        instance.internal_init()
+
+        for module in self.modules:
+            if module.__class__.__name__ == instance.__class__.__name__:
+                if not self._remove_core_protection and module.__origin__.startswith(
+                    "<core"
                 ):
-                    url = url.replace("/blob/", "/raw/")
-                    blob_link = True
+                    raise CoreOverwriteError(
+                        module=(
+                            module.__class__.__name__[:-3]
+                            if module.__class__.__name__.endswith("Mod")
+                            else module.__class__.__name__
+                        )
+                    )
+
+                logger.debug("Removing module %s for update", module)
+                await module.on_unload()
+
+                self.modules.remove(module)
+                for _, method in utils.iter_attrs(module):
+                    if isinstance(method, InfiniteLoop):
+                        method.stop()
+                        logger.debug(
+                            "Stopped loop in module %s, method %s",
+                            module,
+                            method,
+                        )
+
+        self.modules += [instance]
+
+    def find_alias(
+        self,
+        alias: str,
+        include_legacy: bool = False,
+    ) -> typing.Optional[str]:
+        if not alias:
+            return None
+
+        for command_name, _command in self.commands.items():
+            aliases = []
+            if getattr(_command, "alias", None) and not (
+                aliases := getattr(_command, "aliases", None)
+            ):
+                aliases = [_command.alias]
+
+            if not aliases:
+                continue
+
+            if any(
+                alias.lower() == _alias.lower()
+                and alias.lower() not in self._core_commands
+                for _alias in aliases
+            ):
+                return command_name
+
+        if alias in self.aliases and include_legacy:
+            return self.aliases[alias]
+
+        return None
+
+    def dispatch(self, _command: str) -> typing.Tuple[str, typing.Optional[str]]:
+        """Dispatch command to appropriate module"""
+
+        return next(
+            (
+                (cmd, self.commands[cmd.lower()])
+                for cmd in [
+                    _command,
+                    self.aliases.get(_command.lower()),
+                    self.find_alias(_command),
+                ]
+                if cmd and cmd.lower() in self.commands
+            ),
+            (_command, None),
+        )
+
+    def send_config(self, skip_hook: bool = False):
+        """Configure modules"""
+        for mod in self.modules:
+            self.send_config_one(mod, skip_hook)
+
+    def send_config_one(self, mod: Module, skip_hook: bool = False):
+        """Send config to single instance"""
+        with contextlib.suppress(AttributeError):
+            _heroku_client_id_logging_tag = copy.copy(self.client.tg_id)  # noqa: F841
+
+        if hasattr(mod, "config"):
+            modcfg = self._db.get(
+                mod.__class__.__name__,
+                "__config__",
+                {},
+            )
+            try:
+                for conf in mod.config:
+                    with contextlib.suppress(validators.ValidationError):
+                        mod.config.set_no_raise(
+                            conf,
+                            (
+                                modcfg[conf]
+                                if conf in modcfg
+                                else os.environ.get(f"{mod.__class__.__name__}.{conf}")
+                                or mod.config.getdef(conf)
+                            ),
+                        )
+            except AttributeError:
+                logger.warning(
+                    "Got invalid config instance. Expected `ModuleConfig`, got %s, %s",
+                    type(mod.config),
+                    mod.config,
+                )
+
+        if not hasattr(mod, "name"):
+            mod.name = mod.strings["name"]
+
+        if skip_hook:
+            return
+
+        if not hasattr(mod, "strings"):
+            mod.strings = {}
+
+        mod.strings = Strings(mod, self.translator)
+        mod.translator = self.translator
+
+        try:
+            mod.config_complete()
+        except Exception as e:
+            logger.exception("Failed to send mod config complete signal due to %s", e)
+            raise
+
+    async def send_ready_one_wrapper(self, *args, **kwargs):
+        """Wrapper for send_ready_one"""
+        try:
+            await self.send_ready_one(*args, **kwargs)
+        except Exception as e:
+            logger.exception("Failed to send mod init complete signal due to %s", e)
+
+    async def send_ready(self):
+        """Send all data to all modules"""
+        await self.inline.register_manager()
+        await asyncio.gather(
+            *[self.send_ready_one_wrapper(mod) for mod in self.modules]
+        )
+
+    async def send_ready_one(
+        self,
+        mod: Module,
+        no_self_unload: bool = False,
+        from_dlmod: bool = False,
+    ):
+        with contextlib.suppress(AttributeError):
+            _heroku_client_id_logging_tag = copy.copy(self.client.tg_id)  # noqa: F841
+
+        if from_dlmod:
+            try:
+                if len(inspect.signature(mod.on_dlmod).parameters) == 2:
+                    await mod.on_dlmod(self.client, self._db)
+                else:
+                    await mod.on_dlmod()
+            except Exception:
+                logger.info("Can't process `on_dlmod` hook", exc_info=True)
+
+        try:
+            if len(inspect.signature(mod.client_ready).parameters) == 2:
+                await mod.client_ready(self.client, self._db)
             else:
-                url = await self._find_link(module_name)
+                await mod.client_ready()
+        except SelfUnload as e:
+            if no_self_unload:
+                raise e
 
-                if not url:
-                    if message is not None:
-                        await utils.answer(message, self.strings("no_module"))
+            logger.debug("Unloading %s, because it raised SelfUnload", mod)
+            self.modules.remove(mod)
+        except SelfSuspend as e:
+            if no_self_unload:
+                raise e
 
-                    return MODULE_LOADING_FAILED
-
-            if message:
-                message = await utils.answer(
-                    message,
-                    self.strings("installing").format(module_name),
-                )
-
-            try:
-                r = await self._storage.fetch(url, auth=self.config["basic_auth"])
-            except requests.exceptions.HTTPError:
-                if message is not None:
-                    await utils.answer(message, self.strings("no_module"))
-
-                return MODULE_LOADING_FAILED
-
-            await self.load_module(
-                r,
-                message,
-                module_name,
-                url,
-                blob_link=blob_link,
-            )
-            return MODULE_LOADING_SUCCESS
-        except Exception:
-            logger.exception("Failed to load %s", module_name)
-            return MODULE_LOADING_FAILED
-
-    async def _inline__load(
-        self,
-        call: InlineCall,
-        doc: str,
-        path_: str,
-        mode: str,
-    ):
-        save = False
-        if mode == "all_yes":
-            self._db.set(main.__name__, "permanent_modules_fs", True)
-            self._db.set(main.__name__, "disable_modules_fs", False)
-            await call.answer(self.strings("will_save_fs"))
-            save = True
-        elif mode == "all_no":
-            self._db.set(main.__name__, "disable_modules_fs", True)
-            self._db.set(main.__name__, "permanent_modules_fs", False)
-        elif mode == "once":
-            save = True
-
-        await self.load_module(doc, call, origin=path_ or "<string>", save_fs=save)
-
-    @loader.command(alias="lm")
-    async def loadmod(self, message: Message, force_pm: bool = False):
-        args = utils.get_args_raw(message)
-        if "-fs" in args:
-            force_save = True
-            args = args.replace("-fs", "").strip()
-        else:
-            force_save = False
-
-        msg = message if message.file else (await message.get_reply_message())
-
-        if msg is None or msg.media is None:
-            await utils.answer(message, self.strings("provide_module"))
+            logger.debug("Suspending %s, because it raised SelfSuspend", mod)
             return
-
-        await utils.answer(
-            message, self.strings("loading_module_via_file")
-        )
-
-        path_ = None
-        doc = await msg.download_media(bytes)
-
-        try:
-            doc = doc.decode()
-        except UnicodeDecodeError:
-            await utils.answer(message, self.strings("bad_unicode"))
-            return
-
-        if (
-            not self._db.get(
-                main.__name__,
-                "disable_modules_fs",
-                False,
-            )
-            and not self._db.get(main.__name__, "permanent_modules_fs", False)
-            and not force_save
-        ):
-            if message.file:
-                await message.edit("")
-                message = await message.respond("🪐", reply_to=utils.get_topic(message))
-
-            if await self.inline.form(
-                self.strings("module_fs"),
-                message=message,
-                reply_markup=[
-                    [
-                        {
-                            "text": self.strings("save"),
-                            "callback": self._inline__load,
-                            "args": (doc, path_, "once"),
-                        },
-                        {
-                            "text": self.strings("no_save"),
-                            "callback": self._inline__load,
-                            "args": (doc, path_, "no"),
-                        },
-                    ],
-                    [
-                        {
-                            "text": self.strings("save_for_all"),
-                            "callback": self._inline__load,
-                            "args": (doc, path_, "all_yes"),
-                        }
-                    ],
-                    [
-                        {
-                            "text": self.strings("never_save"),
-                            "callback": self._inline__load,
-                            "args": (doc, path_, "all_no"),
-                        }
-                    ],
-                ],
-            ):
-                return
-
-        if path_ is not None:
-            await self.load_module(
-                doc,
-                message,
-                origin=path_,
-                save_fs=(
-                    force_save
-                    or self._db.get(main.__name__, "permanent_modules_fs", False)
-                    and not self._db.get(main.__name__, "disable_modules_fs", False)
-                ),
-            )
-        else:
-            await self.load_module(
-                doc,
-                message,
-                save_fs=(
-                    force_save
-                    or self._db.get(main.__name__, "permanent_modules_fs", False)
-                    and not self._db.get(main.__name__, "disable_modules_fs", False)
-                ),
-            )
-
-    async def approve_internal(
-        self,
-        call: InlineCall,
-        channel: "hints.EntityLike",  # type: ignore  # noqa
-        event: asyncio.Event,
-    ):
-        """
-        Don't you dare call it externally
-        """
-        await self._client(JoinChannelRequest(channel))
-        event.status = True
-        event.set()
-
-        await call.edit(
-            (
-                "💫 <b>Joined <a"
-                f' href="https://t.me/{channel.username}">{utils.escape_html(channel.title)}</a></b>'
-            ),
-            photo="https://raw.githubusercontent.com/coddrago/assets/refs/heads/main/heroku/joined_jr.png",
-        )
-
-    async def load_module(
-        self,
-        doc: str,
-        message: Message,
-        name: typing.Optional[str] = None,
-        origin: str = "<string>",
-        did_requirements: bool = False,
-        save_fs: bool = False,
-        blob_link: bool = False,
-    ):
-        if any(
-            line.replace(" ", "") == "#scope:ffmpeg" for line in doc.splitlines()
-        ) and os.system("ffmpeg -version 1>/dev/null 2>/dev/null"):
-            if isinstance(message, Message):
-                await utils.answer(message, self.strings("ffmpeg_required"))
-            return
-
-        if (
-            any(line.replace(" ", "") == "#scope:inline" for line in doc.splitlines())
-            and not self.inline.init_complete
-        ):
-            if isinstance(message, Message):
-                await utils.answer(message, self.strings("inline_init_failed"))
-            return
-
-        if re.search(r"# ?scope: ?heroku_min", doc):
-            ver = re.search(r"# ?scope: ?heroku_min ((?:\d+\.){2}\d+)", doc).group(1)
-            ver_ = tuple(map(int, ver.split(".")))
-            if main.__version__ < ver_:
-                if isinstance(message, Message):
-                    if getattr(message, "file", None):
-                        m = utils.get_chat_id(message)
-                        await message.edit("")
-                    else:
-                        m = message
-
-                    await self.inline.form(
-                        self.strings("version_incompatible").format(ver),
-                        m,
-                        reply_markup=[
-                            {
-                                "text": self.lookup("updater").strings("btn_update"),
-                                "callback": self.lookup("updater").inline_update,
-                            },
-                            {
-                                "text": self.lookup("updater").strings("cancel"),
-                                "action": "close",
-                            },
-                        ],
-                    )
-                return
-
-        developer = re.search(r"# ?meta developer: ?(.+)", doc)
-        developer = developer.group(1) if developer else False
-
-        blob_link = self.strings("blob_link") if blob_link else ""
-
-        if name is None:
-            try:
-                node = ast.parse(doc)
-                uid = next(
-                    n.name
-                    for n in node.body
-                    if isinstance(n, ast.ClassDef)
-                    and any(
-                        isinstance(base, ast.Attribute)
-                        and base.value.id == "Module"
-                        or isinstance(base, ast.Name)
-                        and base.id == "Module"
-                        for base in n.bases
-                    )
-                )
-            except Exception:
-                logger.debug(
-                    "Can't parse classname from code, using legacy uid instead",
-                    exc_info=True,
-                )
-                uid = "__extmod_" + str(uuid.uuid4())
-        else:
-            if name.startswith(self.config["MODULES_REPO"]):
-                name = name.split("/")[-1].split(".py")[0]
-
-            uid = name.replace("%", "%%").replace(".", "%d")
-
-        module_name = f"heroku.modules.{uid}"
-        doc = geek.compat(doc)
-        
-        async def restart_inline(call: InlineCall):
-            await call.edit(self.strings["requirements_restarted"])
-            await self.invoke("restart", "-f", message=message)
-
-        async def core_overwrite(e: CoreOverwriteError):
-            nonlocal message
-
-            with contextlib.suppress(Exception):
-                self.allmodules.modules.remove(instance)
-
-            if not message:
-                return
-
-            await utils.answer(
-                message,
-                self.strings(f"overwrite_{e.type}").format(
-                    *(
-                        (e.target,)
-                        if e.type == "module"
-                        else (utils.escape_html(self.get_prefix()), e.target)
-                    )
-                ),
-            )
-
-        try:
-            try:
-                spec = ModuleSpec(
-                    module_name,
-                    loader.StringLoader(doc, f"<external {module_name}>"),
-                    origin=f"<external {module_name}>",
-                )
-                instance = await self.allmodules.register_module(
-                    spec,
-                    module_name,
-                    origin,
-                    save_fs=save_fs,
-                )
-            except ImportError as e:
-                logger.info(
-                    "Module loading failed, attemping dependency installation (%s)",
-                    e.name,
-                )
-                # Let's try to reinstall dependencies
-                try:
-                    requirements = list(
-                        filter(
-                            lambda x: not x.startswith(("-", "_", ".")),
-                            map(
-                                str.strip,
-                                loader.VALID_PIP_PACKAGES.search(doc)[1].split(),
-                            ),
-                        )
-                    )
-                except TypeError:
-                    logger.warning(
-                        "No valid pip packages specified in code, attemping"
-                        " installation from error"
-                    )
-                    requirements = [
-                        {
-                            "sklearn": "scikit-learn",
-                            "pil": "Pillow",
-                            "herokutl": "Heroku-TL-New",
-                        }.get(e.name.lower(), e.name)
-                    ]
-
-                if not requirements:
-                    raise Exception("Nothing to install") from e
-
-                logger.debug("Installing requirements: %s", requirements)
-
-                if did_requirements:
-                    if message is not None:
-                        await self.inline.form(
-                            message=message,
-                            text = self.strings("requirements_restart").format(e.name),
-                            reply_markup = [
-                                {
-                                    "text": "🚀 restart", "callback": restart_inline
-                                }
-                            ]
-                        )
-
-                    return
-
-                if message is not None:
-                    await utils.answer(
-                        message,
-                        self.strings("requirements_installing").format(
-                            "\n".join(
-                                f"{self.config['command_emoji']}"
-                                f" {req}"
-                                for req in requirements
-                            )
-                        ),
-                    )
-
-                is_venv = hasattr(sys, 'real_prefix') or sys.prefix != getattr(sys, 'base_prefix', sys.prefix)
-                need_user_flag = loader.USER_INSTALL and not is_venv
-
-                pip = await asyncio.create_subprocess_exec(
-                    sys.executable,
-                    "-m",
-                    "pip",
-                    "install",
-                    "--upgrade",
-                    "-q",
-                    "--disable-pip-version-check",
-                    "--no-warn-script-location",
-                    *["--user"] if need_user_flag else [],
-                    *requirements,
-                )
-
-                rc = await pip.wait()
-
-                if rc != 0:
-                    if message is not None:
-                        await utils.answer(
-                            message,
-                            self.strings("requirements_failed")
-                        )
-
-                    return
-
-                importlib.invalidate_caches()
-
-                kwargs = utils.get_kwargs()
-                kwargs["did_requirements"] = True
-
-                return await self.load_module(**kwargs)  # Try again
-            except CoreOverwriteError as e:
-                await core_overwrite(e)
-                return
-            except (loader.LoadError, ScamDetectionError) as e:
-                with contextlib.suppress(Exception):
-                    await self.allmodules.unload_module(instance.__class__.__name__)
-
-                with contextlib.suppress(Exception):
-                    self.allmodules.modules.remove(instance)
-
-                if message:
-                    if isinstance(e, loader.LoadError):
-                        await utils.answer(
-                            message,
-                            (
-                                "<emoji document_id=5454225457916420314>😖</emoji>"
-                                f" <b>{utils.escape_html(str(e))}</b>"
-                            ),
-                        )
-                    elif isinstance(e, ScamDetectionError):
-                        await utils.answer(
-                            message,
-                            (
-                                self.strings('scam_module').format(
-                                    name=instance.__class__.__name__,
-                                    prefix=self.get_prefix(),
-                                )
-                            )
-                        )
-                return
         except Exception as e:
-            logger.exception("Loading external module failed due to %s", e)
-
-            if message is not None:
-                await utils.answer(message, self.strings("load_failed"))
-
-            return
-
-        if hasattr(instance, "__version__") and isinstance(instance.__version__, tuple):
-            version = (
-                "<b><i>"
-                f" (v{'.'.join(list(map(str, list(instance.__version__))))})</i></b>"
-            )
-        else:
-            version = ""
-
-        try:
-            try:
-                self.allmodules.send_config_one(instance)
-
-                async def inner_proxy():
-                    nonlocal instance, message
-                    while True:
-                        if hasattr(instance, "heroku_wait_channel_approve"):
-                            if message:
-                                (
-                                    module,
-                                    channel,
-                                    reason,
-                                ) = instance.heroku_wait_channel_approve
-                                message = await utils.answer(
-                                    message,
-                                    self.strings("wait_channel_approve").format(
-                                        module,
-                                        channel.username,
-                                        utils.escape_html(channel.title),
-                                        utils.escape_html(reason),
-                                        self.inline.bot_username,
-                                    ),
-                                )
-                                return
-
-                        await asyncio.sleep(0.1)
-
-                task = asyncio.ensure_future(inner_proxy())
-                await self.allmodules.send_ready_one(
-                    instance,
-                    no_self_unload=True,
-                    from_dlmod=bool(message),
-                )
-                task.cancel()
-            except CoreOverwriteError as e:
-                await core_overwrite(e)
-                return
-            except (loader.LoadError, ScamDetectionError) as e:
-                with contextlib.suppress(Exception):
-                    await self.allmodules.unload_module(instance.__class__.__name__)
-
-                with contextlib.suppress(Exception):
-                    self.allmodules.modules.remove(instance)
-
-                if message:
-                    if isinstance(e, loader.LoadError):
-                        await utils.answer(
-                            message,
-                            (
-                                "<emoji document_id=5454225457916420314>😖</emoji>"
-                                f" <b>{utils.escape_html(str(e))}</b>"
-                            ),
-                        )
-                    elif isinstance(e, ScamDetectionError):
-                        await utils.answer(
-                            message,
-                            (
-                                self.strings('scam_module').format(
-                                    name=instance.__class__.__name__,
-                                    prefix=self.get_prefix(),
-                                )
-                            )
-                        )
-                return
-            except loader.SelfUnload as e:
-                logger.debug("Unloading %s, because it raised `SelfUnload`", instance)
-                with contextlib.suppress(Exception):
-                    await self.allmodules.unload_module(instance.__class__.__name__)
-
-                with contextlib.suppress(Exception):
-                    self.allmodules.modules.remove(instance)
-
-                if message:
-                    await utils.answer(
-                        message,
-                        (
-                            "<emoji document_id=5454225457916420314>😖</emoji>"
-                            f" <b>{utils.escape_html(str(e))}</b>"
-                        ),
-                    )
-                return
-            except loader.SelfSuspend as e:
-                logger.debug("Suspending %s, because it raised `SelfSuspend`", instance)
-                if message:
-                    await utils.answer(
-                        message,
-                        (
-                            "🥶 <b>Module suspended itself\nReason:"
-                            f" {utils.escape_html(str(e))}</b>"
-                        ),
-                    )
-                return
-        except Exception as e:
-            logger.exception("Module threw because of %s", e)
-
-            if message is not None:
-                await utils.answer(message, self.strings("load_failed"))
-
-            return
-
-        instance.heroku_meta_pic = next(
-            (
-                line.replace(" ", "").split("#metapic:", maxsplit=1)[1]
-                for line in doc.splitlines()
-                if line.replace(" ", "").startswith("#metapic:")
-            ),
-            None,
-        )
-
-        pack_url = next(
-            (
-                line.replace(" ", "").split("#packurl:", maxsplit=1)[1]
-                for line in doc.splitlines()
-                if line.replace(" ", "").startswith("#packurl:")
-            ),
-            None,
-        )
-
-        if pack_url and (
-            transations := await self.allmodules.translator.load_module_translations(
-                pack_url
-            )
-        ):
-            instance.strings.external_strings = transations
-
-        for alias, cmd in self.lookup("settings").get("aliases", {}).items():
-            if cmd in instance.commands:
-                self.allmodules.add_alias(alias, cmd)
-
-        try:
-            modname = instance.strings("name")
-        except (KeyError, AttributeError):
-            modname = getattr(instance, "name", instance.__class__.__name__)
-
-        try:
-            developer_entity = await (
-                self._client.force_get_entity
-                if (
-                    developer in self._client.heroku_entity_cache
-                    and getattr(
-                        await self._client.get_entity(developer),
-                        "left",
-                        True,
-                    )
-                )
-                else self._client.get_entity
-            )(developer)
-        except Exception:
-            developer_entity = None
-
-        if not isinstance(developer_entity, Channel):
-            developer_entity = None
-
-        if message is None:
-            return
-
-        modhelp = ""
-
-        if instance.__doc__:
-            modhelp += (
-                "<i>\n<emoji document_id=5879813604068298387>ℹ️</emoji>"
-                f" {utils.escape_html(inspect.getdoc(instance))}</i>\n"
-            )
-
-        subscribe = ""
-        subscribe_markup = None
-
-        depends_from = []
-        for key in dir(instance):
-            value = getattr(instance, key)
-            if isinstance(value, loader.Library):
-                depends_from.append(
-                    "<emoji document_id=5197195523794157505>▫️</emoji>"
-                    " <code>{}</code> <b>{}</b> <code>{}</code>".format(
-                        value.__class__.__name__,
-                        self.strings("by"),
-                        (
-                            value.developer
-                            if isinstance(getattr(value, "developer", None), str)
-                            else "Unknown"
-                        ),
-                    )
-                )
-
-        depends_from = (
-            self.strings("depends_from").format("\n".join(depends_from))
-            if depends_from
-            else ""
-        )
-
-        def loaded_msg(use_subscribe: bool = True):
-            nonlocal \
-                modname, \
-                version, \
-                modhelp, \
-                developer, \
-                origin, \
-                subscribe, \
-                blob_link, \
-                depends_from
-            return self.strings("loaded").format(
-                modname.strip(),
-                version,
-                utils.ascii_face(),
-                modhelp,
-                developer if not subscribe or not use_subscribe else "",
-                depends_from,
+            logger.exception(
                 (
-                    self.strings("modlink").format(origin)
-                    if origin != "<string>" and self.config["share_link"]
-                    else ""
+                    "Failed to send mod init complete signal for %s due to %s,"
+                    " attempting unload"
                 ),
-                blob_link,
-                subscribe if use_subscribe else "",
+                mod,
+                e,
             )
+            self.modules.remove(mod)
+            raise
 
-        if developer:
-            if developer.startswith("@") and developer not in self.get(
-                "do_not_subscribe", []
-            ):
-                if (
-                    developer_entity
-                    and getattr(developer_entity, "left", True)
-                    and self._db.get(main.__name__, "suggest_subscribe", True)
-                ):
-                    subscribe = self.strings("suggest_subscribe").format(
-                        f"@{utils.escape_html(developer_entity.username)}"
-                    )
-                    subscribe_markup = [
-                        {
-                            "text": self.strings("subscribe"),
-                            "callback": self._inline__subscribe,
-                            "args": (
-                                developer_entity.id,
-                                functools.partial(loaded_msg, use_subscribe=False),
-                                True,
-                            ),
-                        },
-                        {
-                            "text": self.strings("no_subscribe"),
-                            "callback": self._inline__subscribe,
-                            "args": (
-                                developer,
-                                functools.partial(loaded_msg, use_subscribe=False),
-                                False,
-                            ),
-                        },
-                    ]
+        for _, method in utils.iter_attrs(mod):
+            if isinstance(method, InfiniteLoop):
+                setattr(method, "module_instance", mod)
 
-            developer = self.strings("developer").format(
-                utils.escape_html(developer)
-                if isinstance(developer_entity, Channel)
-                else f"<code>{utils.escape_html(developer)}</code>"
-            )
-        else:
-            developer = ""
+                if method.autostart:
+                    method.start()
 
-        if any(
-            line.replace(" ", "") == "#scope:disable_onload_docs"
-            for line in doc.splitlines()
-        ):
-            await utils.answer(message, loaded_msg(), reply_markup=subscribe_markup)
-            return
+                logger.debug("Added module %s to method %s", mod, method)
 
-        for _name, fun in sorted(
-            instance.commands.items(),
-            key=lambda x: x[0],
-        ):
-            modhelp += "\n{} <code>{}{}</code> {}".format(
-                f"{self.config['command_emoji']}",
-                utils.escape_html(self.get_prefix()),
-                _name,
-                (
-                    utils.escape_html(inspect.getdoc(fun))
-                    if fun.__doc__
-                    else self.strings("undoc")
-                ),
-            )
+        self.unregister_commands(mod, "update")
+        self.unregister_raw_handlers(mod, "update")
 
-        if self.inline.init_complete:
-            for _name, fun in sorted(
-                instance.inline_handlers.items(),
-                key=lambda x: x[0],
-            ):
-                modhelp += self.strings("ihandler").format(
-                    f"@{self.inline.bot_username} {_name}",
-                    (
-                        utils.escape_html(inspect.getdoc(fun))
-                        if fun.__doc__
-                        else self.strings("undoc")
-                    ),
-                )
+        self.register_commands(mod)
+        self.register_watchers(mod)
+        self.register_raw_handlers(mod)
 
-        try:
-            await utils.answer(message, loaded_msg(), reply_markup=subscribe_markup)
-        except MediaCaptionTooLongError:
-            await message.reply(loaded_msg(False))
-
-    async def _inline__subscribe(
-        self,
-        call: InlineCall,
-        entity: int,
-        msg: typing.Callable[[], str],
-        subscribe: bool,
-    ):
-        if not subscribe:
-            self.set("do_not_subscribe", self.get("do_not_subscribe", []) + [entity])
-            await utils.answer(call, msg())
-            await call.answer(self.strings("not_subscribed"))
-            return
-
-        await self._client(JoinChannelRequest(entity))
-        await utils.answer(call, msg())
-        await call.answer(self.strings("subscribed"))
-
-    @loader.command(alias="ulm")
-    async def unloadmod(self, message: Message):
-        if not (args := utils.get_args_raw(message)):
-            await utils.answer(message, self.strings("no_class"))
-            return
-
-        instance = self.lookup(args)
-
-        if issubclass(instance.__class__, loader.Library):
-            await utils.answer(message, self.strings("cannot_unload_lib"))
-            return
-
-        try:
-            worked = await self.allmodules.unload_module(args)
-        except CoreUnloadError as e:
-            await utils.answer(
-                message,
-                self.strings("unload_core").format(e.module),
-            )
-            return
-
-        if not self.allmodules.secure_boot:
-            self.set(
-                "loaded_modules",
-                {
-                    mod: link
-                    for mod, link in self.get("loaded_modules", {}).items()
-                    if mod not in worked
-                },
-            )
-
-        msg = (
-            self.strings("unloaded").format(
-                "<emoji document_id=5784993237412351403>✅</emoji>",
-                ", ".join(
-                    [(mod[:-3] if mod.endswith("Mod") else mod) for mod in worked]
-                ),
-            )
-            if worked
-            else self.strings("not_unloaded")
+    def get_classname(self, name: str) -> str:
+        return next(
+            (
+                module.__class__.__module__
+                for module in reversed(self.modules)
+                if name in (module.name, module.__class__.__module__)
+            ),
+            name,
         )
 
-        await utils.answer(message, msg)
-
-    @loader.command()
-    async def clearmodules(self, message: Message):
-        await self.inline.form(
-            self.strings("confirm_clearmodules"),
-            message,
-            reply_markup=[
-                {
-                    "text": self.strings("clearmodules"),
-                    "callback": self._inline__clearmodules,
-                },
-                {
-                    "text": self.strings("cancel"),
-                    "action": "close",
-                },
-            ],
-        )
-
-    @loader.command()
-    async def addrepo(self, message: Message):
-        if not (args := utils.get_args_raw(message)) or (
-            not utils.check_url(args) and not utils.check_url(f"https://{args}")
-        ):
-            await utils.answer(message, self.strings("no_repo"))
-            return
-
-        if args.endswith("/"):
-            args = args[:-1]
-
-        if not args.startswith("https://") and not args.startswith("http://"):
-            args = f"https://{args}"
-
-        try:
-            r = await utils.run_sync(
-                requests.get,
-                f"{args}/full.txt",
-                auth=(
-                    tuple(self.config["basic_auth"].split(":", 1))
-                    if self.config["basic_auth"]
-                    else None
-                ),
-            )
-            r.raise_for_status()
-            if not r.text.strip():
-                raise ValueError
-        except Exception:
-            await utils.answer(message, self.strings("no_repo"))
-            return
-
-        if args in self.config["ADDITIONAL_REPOS"]:
-            await utils.answer(message, self.strings("repo_exists").format(args))
-            return
-
-        self.config["ADDITIONAL_REPOS"] += [args]
-
-        await utils.answer(message, self.strings("repo_added").format(args))
-
-    @loader.command()
-    async def delrepo(self, message: Message):
-        if not (args := utils.get_args_raw(message)) or not utils.check_url(args):
-            await utils.answer(message, self.strings("no_repo"))
-            return
-
-        if args.endswith("/"):
-            args = args[:-1]
-
-        if args not in self.config["ADDITIONAL_REPOS"]:
-            await utils.answer(message, self.strings("repo_not_exists"))
-            return
-
-        self.config["ADDITIONAL_REPOS"].remove(args)
-
-        await utils.answer(message, self.strings("repo_deleted").format(args))
-
-    async def _inline__clearmodules(self, call: InlineCall):
-        self.set("loaded_modules", {})
-
-        for file in os.scandir(loader.LOADED_MODULES_DIR):
-            try:
-                shutil.rmtree(file.path)
-            except Exception:
-                logger.debug("Failed to remove %s", file.path, exc_info=True)
-
-        await utils.answer(call, self.strings("all_modules_deleted"))
-        await self.lookup("Updater").restart_common(call)
-
-    async def _update_modules(self):
-        todo = await self._get_modules_to_load()
-
-        self._secure_boot = False
-
-        if self._db.get(loader.__name__, "secure_boot", False):
-            self._db.set(loader.__name__, "secure_boot", False)
-            self._secure_boot = True
-        else:
-            for mod in todo.values():
-                await self.download_and_install(mod)
-
-            self.update_modules_in_db()
-
-            aliases = {
-                alias: cmd
-                for alias, cmd in self.lookup("settings").get("aliases", {}).items()
-                if self.allmodules.add_alias(alias, cmd)
-            }
-
-            self.lookup("settings").set("aliases", aliases)
-
-        self.fully_loaded = True
+    async def unload_module(self, classname: str) -> typing.List[str]:
+        """Remove module and all stuff from it"""
+        worked = []
 
         with contextlib.suppress(AttributeError):
-            await self.lookup("Updater").full_restart_complete(self._secure_boot)
+            _heroku_client_id_logging_tag = copy.copy(self.client.tg_id)  # noqa: F841
 
-    def flush_cache(self) -> int:
-        """Flush the cache of links to modules"""
-        count = sum(map(len, self._links_cache.values()))
-        self._links_cache = {}
-        return count
-
-    def inspect_cache(self) -> int:
-        """Inspect the cache of links to modules"""
-        return sum(map(len, self._links_cache.values()))
-
-    async def reload_core(self) -> int:
-        """Forcefully reload all core modules"""
-        self.fully_loaded = False
-
-        if self._secure_boot:
-            self._db.set(loader.__name__, "secure_boot", True)
-
-        if not self._db.get(main.__name__, "remove_core_protection", False):
-            for module in self.allmodules.modules:
-                if module.__origin__.startswith("<core"):
-                    module.__origin__ = "<reload-core>"
-
-        loaded = await self.allmodules.register_all(no_external=True)
-        for instance in loaded:
-            self.allmodules.send_config_one(instance)
-            await self.allmodules.send_ready_one(
-                instance,
-                no_self_unload=False,
-                from_dlmod=False,
-            )
-
-        self.fully_loaded = True
-        return len(loaded)
-
-    @loader.command()
-    async def mlcmd(self, message: Message):
-        """| send module via file"""
-        if not (args := utils.get_args_raw(message)):
-            await utils.answer(message, self.strings("args"))
-            return
-
-        await utils.answer(
-            message, self.strings("ml_load_module")
-        )
-
-        exact = True
-        if not (
-            class_name := next(
-                (
-                    module.strings("name")
-                    for module in self.allmodules.modules
-                    if args.lower()
-                    in {
-                        module.strings("name").lower(),
-                        module.__class__.__name__.lower(),
-                    }
-                ),
-                None,
-            )
-        ):
-            if not (
-                class_name := next(
-                    reversed(
-                        sorted(
-                            [
-                                module.strings["name"].lower()
-                                for module in self.allmodules.modules
-                            ]
-                            + [
-                                module.__class__.__name__.lower()
-                                for module in self.allmodules.modules
-                            ],
-                            key=lambda x: difflib.SequenceMatcher(
-                                None,
-                                args.lower(),
-                                x,
-                            ).ratio(),
-                        )
-                    ),
-                    None,
-                )
+        for module in self.modules:
+            if classname.lower() in (
+                module.name.lower(),
+                module.__class__.__name__.lower(),
             ):
-                await utils.answer(message, self.strings("404"))
-                return
+                if not self._remove_core_protection and module.__origin__.startswith(
+                    "<core"
+                ):
+                    raise CoreUnloadError(module.__class__.__name__)
 
-            exact = False
+                worked += [module.__class__.__name__]
 
-        try:
-            module = self.lookup(class_name)
-            sys_module = inspect.getmodule(module)
-        except Exception:
-            await utils.answer(message, self.strings("404"))
-            return
+                name = module.__class__.__name__
+                path = os.path.join(
+                    LOADED_MODULES_DIR,
+                    f"{name}_{self.client.tg_id}.py",
+                )
 
-        link = module.__origin__
+                if os.path.isfile(path):
+                    os.remove(path)
+                    logger.debug("Removed %s file at path %s", name, path)
 
-        text = (
-            f"<b>🧳 {utils.escape_html(class_name)}</b>"
-            if not utils.check_url(link)
-            else (
-                f'📼 <b><a href="{link}">Link</a> for'
-                f" {utils.escape_html(class_name)}:</b>"
-                f' <code>{link}</code>\n\n{self.strings("not_exact") if not exact else ""}'
-            )
-        )
+                logger.debug("Removing module %s for unload", module)
+                self.modules.remove(module)
 
-        text = (
-            self.strings("link").format(
-                class_name=utils.escape_html(class_name),
-                url=link,
-                not_exact=self.strings("not_exact") if not exact else "",
-                prefix=utils.escape_html(self.get_prefix()),
-            )
-            if utils.check_url(link)
-            else self.strings("file").format(
-                class_name=utils.escape_html(class_name),
-                not_exact=self.strings("not_exact") if not exact else "",
-                prefix=utils.escape_html(self.get_prefix()),
-            )
-        )
+                await module.on_unload()
 
-        file = io.BytesIO(sys_module.__loader__.data)
-        file.name = f"{class_name}.py"
-        file.seek(0)
+                self.unregister_raw_handlers(module, "unload")
+                self.unregister_loops(module, "unload")
+                self.unregister_commands(module, "unload")
+                self.unregister_watchers(module, "unload")
+                self.unregister_inline_stuff(module, "unload")
 
-        await utils.answer_file(
-            message,
-            file,
-            caption=text,
-            reply_to=getattr(message, "reply_to_msg_id", None),
-        )
+        logger.debug("Worked: %s", worked)
+        return worked
 
-    def _format_result(
-        self,
-        result: dict,
-        query: str,
-        no_translate: bool = False,
-    ) -> str:
-        commands = "\n".join(
-            [
-                f"▫️ <code>{utils.escape_html(self.get_prefix())}{utils.escape_html(cmd)}</code>:"
-                f" <b>{utils.escape_html(cmd_doc)}</b>"
-                for cmd, cmd_doc in result["module"]["commands"].items()
-            ]
-        )
+    def unregister_loops(self, instance: Module, purpose: str):
+        for name, method in utils.iter_attrs(instance):
+            if isinstance(method, InfiniteLoop):
+                logger.debug(
+                    "Stopping loop for %s in module %s, method %s",
+                    purpose,
+                    instance.__class__.__name__,
+                    name,
+                )
+                method.stop()
 
-        kwargs = {
-            "name": utils.escape_html(result["module"]["name"]),
-            "dev": utils.escape_html(result["module"]["dev"]),
-            "commands": commands,
-            "cls_doc": utils.escape_html(result["module"]["cls_doc"]),
-            "mhash": result["module"]["hash"],
-            "query": utils.escape_html(query),
-            "prefix": utils.escape_html(self.get_prefix()),
-        }
+    def unregister_commands(self, instance: Module, purpose: str):
+        for name, cmd in self.commands.copy().items():
+            if cmd.__self__.__class__.__name__ == instance.__class__.__name__:
+                logger.debug(
+                    "Removing command %s of module %s for %s",
+                    name,
+                    instance.__class__.__name__,
+                    purpose,
+                )
+                del self.commands[name]
+                for alias, _command in self.aliases.copy().items():
+                    if _command == name:
+                        del self.aliases[alias]
 
-        strings = (
-            self.strings.get("result", "en")
-            if self.config["translate"] and not no_translate
-            else self.strings("result")
-        )
+    def unregister_watchers(self, instance: Module, purpose: str):
+        for _watcher in self.watchers.copy():
+            if _watcher.__self__.__class__.__name__ == instance.__class__.__name__:
+                logger.debug(
+                    "Removing watcher %s of module %s for %s",
+                    _watcher,
+                    instance.__class__.__name__,
+                    purpose,
+                )
+                self.watchers.remove(_watcher)
 
-        text = strings.format(**kwargs)
+    def unregister_raw_handlers(self, instance: Module, purpose: str):
+        """Unregister event handlers for a module"""
+        for handler in self.client.dispatcher.raw_handlers:
+            if handler.__self__.__class__.__name__ == instance.__class__.__name__:
+                self.client.dispatcher.raw_handlers.remove(handler)
+                logger.debug(
+                    "Unregistered raw handler of module %s for %s. ID: %s",
+                    instance.__class__.__name__,
+                    purpose,
+                    handler.id,
+                )
 
-        if len(text) > 1980:
-            kwargs["commands"] = "..."
-            text = strings.format(**kwargs)
+    def add_alias(self, alias: str, cmd: str) -> bool:
+        """Make an alias"""
+        if cmd not in self.commands:
+            return False
 
-        return text
+        self.aliases[alias.lower().strip()] = cmd
+        return True
+
+    def remove_alias(self, alias: str) -> bool:
+        """Remove an alias"""
+        return bool(self.aliases.pop(alias.lower().strip(), None))
+
+    async def log(self, *args, **kwargs):
+        """Unnecessary placeholder for logging"""
+
+    async def reload_translations(self) -> bool:
+        if not await self.translator.init():
+            return False
+
+        for module in self.modules:
+            try:
+                module.config_complete(reload_dynamic_translate=True)
+            except Exception as e:
+                logger.debug(
+                    "Can't complete dynamic translations reload of %s due to %s",
+                    module,
+                    e,
+                )
+
+        return True
