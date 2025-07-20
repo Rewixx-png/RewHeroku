@@ -16,6 +16,7 @@ ENV PYTHONUNBUFFERED=1 \
     REWHOST=true \
     GIT_PYTHON_REFRESH=quiet
 
+# Устанавливаем системные зависимости, как и раньше
 RUN apt-get update && apt-get upgrade -y && apt-get install --no-install-recommends -y \
     build-essential \
     curl \
@@ -41,20 +42,25 @@ RUN curl -sL https://deb.nodesource.com/setup_18.x -o nodesource_setup.sh && \
     rm nodesource_setup.sh
 RUN rm -rf /var/lib/apt/lists/ /var/cache/apt/archives/ /tmp/*
 
-WORKDIR /data
-RUN mkdir /data/private
-
-RUN git clone https://github.com/Rewixx-png/RewHeroku /data/Heroku
+# Создаем рабочую директорию
 WORKDIR /data/Heroku
-RUN git fetch && git checkout master && git pull
 
-RUN echo 'git+https://github.com/coddrago/heroku-tl' > requirements.txt
+# <<< НАЧАЛО ИЗМЕНЕНИЙ >>>
 
-RUN echo 'pycloudflared==0.2.0' >> requirements.txt
+# Удаляем 'RUN git clone' и 'RUN git pull'. Вместо этого:
+# Сначала копируем только файл с зависимостями.
+# Это позволяет Docker кэшировать установку библиотек, если они не менялись.
+COPY requirements.txt .
 
-RUN echo 'Pillow' >> requirements.txt
-
+# Устанавливаем зависимости
 RUN pip install --no-warn-script-location --no-cache-dir -U -r requirements.txt
+
+# А теперь копируем ВЕСЬ остальной код юзербота.
+# Если вы поменяете любой файл в репозитории, этот слой кэша станет недействительным,
+# и Docker будет вынужден использовать свежую версию.
+COPY . .
+
+# <<< КОНЕЦ ИЗМЕНЕНИЙ >>>
 
 EXPOSE 8080
 CMD ["python", "-m", "heroku", "--root"]
