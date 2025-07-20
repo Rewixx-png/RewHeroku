@@ -1,472 +1,375 @@
-function auth(c) {
-    $(".main").fadeOut(250),
-        setTimeout(() => {
-            $(".auth")
-                .hide()
-                .fadeIn(250, () => {
-                    $("#tg_icon").html(""),
-                        bodymovin.loadAnimation({
-                            container: document.getElementById("tg_icon"),
-                            renderer: "canvas",
-                            loop: !0,
-                            autoplay: !0,
-                            path: "https://assets9.lottiefiles.com/packages/lf20_bgqoyj8l.json",
-                            rendererSettings: {
-                                clearCanvas: !0
-                            },
-                        });
-                }),
-                fetch("/web_auth", {
-                    method: "POST",
-                    credentials: "include",
-                    timeout: 25e4,
-                })
-                    .then((b) => b.text())
-                    .then((a) =>
-                        "TIMEOUT" == a ?
-                            (error_message(
-                                "Code waiting timeout exceeded. Reload page and try again.",
-                            ),
-                                void $(".auth").fadeOut(250)) :
-                            a.startsWith("heroku_") ?
-                                ($.cookie("session", a),
-                                    (auth_required = !1),
-                                    $(".authorized").hide().fadeIn(100),
-                                    $(".auth").fadeOut(250, () => {
-                                        $(".installation").fadeIn(250);
-                                    }),
-                                    void c()) :
-                                void 0,
-                    );
-        }, 250);
-}
-var qr_interval = null,
-    qr_login = !1,
-    old_qr_sizes = [
-        document.querySelector(".qr_inner").style.width,
-        document.querySelector(".qr_inner").style.height,
-    ];
-(document.querySelector(".qr_inner").style.width = "100px"),
-    (document.querySelector(".qr_inner").style.height = "100px");
+var api_id;
+var api_hash;
+var phone;
+var password;
+var custom_bot;
+var qr_login = false;
 
-function login_qr() {
-    $("#continue_btn").fadeOut(100),
-        $("#denyqr").hide().fadeIn(250),
-        $(".title, .description").fadeOut(250),
-        fetch("/init_qr_login", {
-            method: "POST",
-            credentials: "include"
-        })
-            .then((b) => b.text())
-            .then((c) => {
-                const d = new QRCodeStyling({
-                    width: window.innerHeight / 3,
-                    height: window.innerHeight / 3,
-                    type: "svg",
-                    data: c,
-                    dotsOptions: {
-                        type: "rounded"
-                    },
-                    cornersSquareOptions: {
-                        type: "extra-rounded"
-                    },
-                    backgroundOptions: {
-                        color: "transparent"
-                    },
-                    imageOptions: {
-                        imageSize: 0.4,
-                        margin: 8
-                    },
-                    qrOptions: {
-                        errorCorrectionLevel: "M"
-                    },
-                });
-                (document.querySelector(".qr_inner").innerHTML = ""),
-                    (document.querySelector(".qr_inner").style.width = old_qr_sizes[0]),
-                    (document.querySelector(".qr_inner").style.height = old_qr_sizes[1]),
-                    d.append(document.querySelector(".qr_inner")),
-                    (qr_interval = setInterval(() => {
-                        fetch("/get_qr_url", {
-                            method: "POST",
-                            credentials: "include"
-                        })
-                            .then((b) => b.text())
-                            .then((b) =>
-                                "SUCCESS" == b || "2FA" == b ?
-                                    ($("#block_qr_login").fadeOut(250),
-                                        $("#denyqr").fadeOut(250),
-                                        $("#continue_btn, .title, .description").hide().fadeIn(250),
-                                        "SUCCESS" == b && switch_block("custom_bot"),
-                                        "2FA" == b && (show_2fa(), (qr_login = !0)),
-                                        void clearInterval(qr_interval)) :
-                                    void d.update({
-                                        data: b
-                                    }),
-                            );
-                    }, 1250));
-            });
-}
-$("#get_started").click(() => {
-    fetch("/can_add", {
-        method: "POST",
-        credentials: "include"
-    }).then((b) =>
-        b.ok ?
-            auth_required ?
-                auth(() => {
-                    $("#get_started").click();
-                }) :
-                void ($("#continue_btn").hide().fadeIn(250),
-                    $("#denyqr").hide(),
-                    $("#enter_api").fadeOut(250),
-                    $("#get_started").fadeOut(250, () => {
-                        switch_block(_current_block);
-                    })) :
-            void show_eula(),
-    );
-}),
-    $("#enter_api").click(() =>
-        auth_required ?
-            auth(() => {
-                $("#enter_api").click();
-            }) :
-            void ($("#get_started").fadeOut(250),
-                $("#enter_api").fadeOut(250, () => {
-                    $("#continue_btn").hide().fadeIn(250), switch_block("api_id");
-                })),
-    );
+var state = 0;
+var tg_code_hash;
 
-function isInt(c) {
-    var a = parseFloat(c);
-    return !isNaN(c) && (0 | a) === a;
-}
-
-function isValidPhone(b) {
-    return /^[+]?\d{11,13}$/.test(b);
-}
-
-function finish_login() {
-    console.log("Done")
-    $(".finish_block").fadeIn()
-    $("#installation_icon").html("")
-    $(".installation").fadeOut()
-    bodymovin.loadAnimation({
-        container: document.getElementById("installation_icon"),
-        renderer: "canvas",
-        loop: !0,
-        autoplay: !0,
-        path: "https://assets1.lottiefiles.com/packages/lf20_n3jgitst.json",
-        rendererSettings: {
-            clearCanvas: !0
-        },
-    })
-}
-
-function show_2fa() {
-    $(".auth-code-form")
-        .hide()
-        .fadeIn(250, () => {
-            $("#monkey-close").html(""),
-                (anim = bodymovin.loadAnimation({
-                    container: document.getElementById("monkey-close"),
-                    renderer: "canvas",
-                    loop: !0,
-                    autoplay: !0,
-                    path: "https://assets1.lottiefiles.com/packages/lf20_eg88dyk9.json",
-                    rendererSettings: {
-                        clearCanvas: !0
-                    },
-                })),
-                anim.addEventListener("complete", () => {
-                    setTimeout(() => {
-                        anim.goToAndPlay(0);
-                    }, 2e3);
-                });
-        }),
-        $(".code-input").removeAttr("disabled"),
-        $(".code-input").attr("inputmode", "text"),
-        $(".code-input").attr("autocomplete", "off"),
-        $(".code-input").attr("autocorrect", "off"),
-        $(".code-input").attr("autocapitalize", "off"),
-        $(".code-input").attr("spellcheck", "false"),
-        $(".code-input").attr("type", "password"),
-        $(".enter").hasClass("tgcode") && $(".enter").removeClass("tgcode"),
-        $(".code-caption").html(
-            "Enter your Telegram 2FA password, then press <span style='color: #dc137b;'>Enter</span>",
-        ),
-        cnt_btn.setAttribute("current-step", "2fa"),
-        $("#monkey").hide(),
-        $("#monkey-close").hide().fadeIn(100),
-        (_current_block = "2fa");
-}
-
-function show_eula() {
-    $(".main").fadeOut(250),
-        $(".eula-form")
-            .hide()
-            .fadeIn(250, () => {
-                $("#law").html(""),
-                    (anim = bodymovin.loadAnimation({
-                        container: document.getElementById("law"),
-                        renderer: "canvas",
-                        loop: !0,
-                        autoplay: !0,
-                        path: "https://static.dan.tatar/forbidden.json",
-                        rendererSettings: {
-                            clearCanvas: !0
-                        },
-                    }));
-            });
-}
-
-function tg_code(b = false) {
-    return b && qr_login ?
-        void fetch("/qr_2fa", {
-            method: "POST",
-            credentials: "include",
-            body: _2fa_pass,
-        }).then((b) => {
-            b.ok ?
-                (console.log("ko"),
-                finish_login(),
-                    $("#block_phone").fadeOut(),
-                    $(".auth-code-form").fadeOut()) :
-                ($(".code-input").removeAttr("disabled"),
-                    b.text().then((b) => {
-                        error_state(), Swal.fire("Error", b, "error");
-                    }));
-        })
-        :
-        void fetch("/tg_code", {
-            method: "POST",
-            body: `${_tg_pass}\n${_phone}\n${_2fa_pass}`,
-        })
-            .then((b) => {
-                b.ok ?
-                    (console.log("ok"),
-                    finish_login(),
-                        $("#block_phone").fadeOut(),
-                        $(".auth-code-form").fadeOut()) :
-                    401 == b.status ?
-                        show_2fa() :
-                        ($(".code-input").removeAttr("disabled"),
-                            b.text().then((b) => {
-                                error_state(), Swal.fire("Error", b, "error");
-                            }));
-
-            })
-            .catch((b) => {
-                Swal.showValidationMessage(`Auth failed: ${b.toString()}`);
-            });
-}
-
-function switch_block(b) {
-    cnt_btn.setAttribute("current-step", b);
-    try {
-        $(`#block_${_current_block}`).fadeOut(() => {
-            $(`#block_${b}`).hide().fadeIn();
-        });
-    } catch {
-        $(`#block_${b}`).hide().fadeIn();
+$(document).on("keydown", "input", function (e) {
+  if (e.which == 13) {
+    if (state == 0) {
+      $("#continue_btn").click();
+    } else {
+      $(".enter").click();
     }
-    (_current_block = b), "qr_login" == _current_block && login_qr();
-}
+  }
+});
 
-function error_message(b) {
+$("#get_started").click(function () {
+  $("#get_started").fadeOut(100);
+  $("#enter_api").fadeOut(100, function () {
+    $("#block_phone").fadeIn(200);
+    $("#continue_btn").fadeIn(200);
+    if (!skip_creds) {
+      $("#denyqr").fadeIn(200);
+    }
+  });
+});
+
+$("#enter_api").click(function () {
+  $("#get_started").fadeOut(100);
+  $("#enter_api").fadeOut(100, function () {
+    $("#block_api_id").fadeIn(200);
+    $("#block_api_hash").fadeIn(200);
+    $("#block_phone").fadeIn(200);
+    $("#continue_btn").fadeIn(200);
+    if (!skip_creds) {
+      $("#denyqr").fadeIn(200);
+    }
+  });
+});
+
+
+$("#denyqr").click(function () {
+  qr_login = false;
+  $("#block_qr_login").fadeOut(200);
+  $("#denyqr").fadeOut(200, function () {
+    $("#block_phone").fadeIn(200);
+    $("#continue_btn").fadeIn(200);
+  });
+});
+
+$("#continue_btn").click(async function () {
+  let body_payload = "";
+
+  if ($("#api_id").val() && $("#api_hash").val()) {
+    api_id = $("#api_id").val();
+    api_hash = $("#api_hash").val();
+
+    if (api_hash.length != 32) {
+      Swal.fire({
+        icon: 'error',
+        title: 'Oops...',
+        text: 'Invalid API hash',
+        background: "#16181d",
+        color: "#fff"
+      });
+      return;
+    }
+
+    if (isNaN(parseInt(api_id))) {
+      Swal.fire({
+        icon: 'error',
+        title: 'Oops...',
+        text: 'Invalid API ID',
+        background: "#16181d",
+        color: "#fff"
+      });
+      return;
+    }
+
+    body_payload = api_hash + api_id;
+  }
+
+  let r = await fetch("/set_api", {
+    method: "PUT",
+    body: body_payload,
+    credentials: "include"
+  });
+
+  if (r.status != 200) {
     Swal.fire({
-        icon: "error",
-        title: b
+      icon: 'error',
+      title: 'Oops...',
+      text: await r.text(),
+      background: "#16181d",
+      color: "#fff"
     });
-}
+    return;
+  }
 
-function error_state() {
-    $("body").addClass("red_state"),
-        (cnt_btn.disabled = !0),
-        setTimeout(() => {
-            (cnt_btn.disabled = !1), $("body").removeClass("red_state");
-        }, 1e3);
-}
-var _api_id = "",
-    _api_hash = "",
-    _phone = "",
-    _2fa_pass = "",
-    _tg_pass = "",
-    _current_block = skip_creds ? "qr_login" : "api_id";
+  skip_creds = true;
 
-function is_phone() {
-    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|BB|PlayBook|IEMobile|Windows Phone|Kindle|Silk|Opera Mini/i.test(
-        navigator.userAgent,
-    );
-}
-is_phone() && "qr_login" == _current_block && (_current_block = "phone");
-const cnt_btn = document.querySelector("#continue_btn");
 
-function process_next() {
-    let b = cnt_btn.getAttribute("current-step");
-    if ("api_id" == b) {
-        let b = document.querySelector("#api_id").value;
-        return 4 > b.length || !isInt(b) ?
-            void error_state() :
-            ((_api_id = parseInt(b, 10)), void switch_block("api_hash"));
+  if ($("#phone").val()) {
+    phone = $("#phone").val();
+
+    if (!phone.match(/^\+?[0-9]{1,15}$/)) {
+      Swal.fire({
+        icon: 'error',
+        title: 'Oops...',
+        text: 'Invalid phone number',
+        background: "#16181d",
+        color: "#fff"
+      });
+      return;
     }
-    if ("api_hash" == b) {
-        let b = document.querySelector("#api_hash").value;
-        return 32 == b.length ?
-            ((_api_hash = b),
-                void fetch("/set_api", {
-                    method: "PUT",
-                    body: _api_hash + _api_id,
-                    credentials: "include",
-                })
-                    .then((b) => b.text())
-                    .then((b) => {
-                        "ok" == b
-                            ?
-                            switch_block(is_phone() ? "phone" : "qr_login") :
-                            (error_state(), error_message(b));
-                    })
-                    .catch((b) => {
-                        error_state(),
-                            error_message(
-                                "Error occured while saving credentials: " + b.toString(),
-                            );
-                    })) :
-            void error_state();
+
+    let r = await fetch("/send_tg_code", {
+      method: "POST",
+      body: phone,
+      credentials: "include"
+    });
+
+    if (r.status != 200) {
+      Swal.fire({
+        icon: 'error',
+        title: 'Oops...',
+        text: await r.text(),
+        background: "#16181d",
+        color: "#fff"
+      });
+      return;
     }
-    if ("phone" == b) {
-        let b = document.querySelector("#phone").value;
-        if (!isValidPhone(b)) return void error_state();
-        (_phone = b),
-            fetch("/send_tg_code", {
-                method: "POST",
-                body: _phone,
-                credentials: "include",
-            })
-                .then((b) => {
-                    b.ok ?
-                        ($(".auth-code-form")
-                            .hide()
-                            .fadeIn(250, () => {
-                                $("#monkey").html(""),
-                                    (anim2 = bodymovin.loadAnimation({
-                                        container: document.getElementById("monkey"),
-                                        renderer: "canvas",
-                                        loop: !1,
-                                        autoplay: !0,
-                                        path: "https://assets8.lottiefiles.com/private_files/lf30_t52znxni.json",
-                                        rendererSettings: {
-                                            clearCanvas: !0
-                                        },
-                                    })),
-                                    anim2.addEventListener("complete", () => {
-                                        setTimeout(() => {
-                                            anim2.goToAndPlay(0);
-                                        }, 2e3);
-                                    });
-                            }),
-                            $(".code-input").removeAttr("disabled"),
-                            $(".enter").addClass("tgcode"),
-                            $(".code-caption").text(
-                                "Enter the code you recieved in Telegram",
-                            ),
-                            $(".code-input").attr("autocomplete", "off"),
-                            $(".code-input").attr("autocorrect", "off"),
-                            $(".code-input").attr("autocapitalize", "off"),
-                            $(".code-input").attr("spellcheck", "false"),
-                            $(".code-input").attr("type", "number"),
-                            cnt_btn.setAttribute("current-step", "code"),
-                            (_current_block = "code")) :
-                        403 == b.status ?
-                            show_eula() :
-                            b.text().then((b) => {
-                                error_state(), error_message(b);
-                            });
-                })
-                .catch((b) => {
-                    error_state(), error_message("Code send failed: " + b.toString());
-                });
+  }
+
+  if ($("#custom_bot").val()) {
+    custom_bot = $("#custom_bot").val();
+
+    let r = await fetch("/custom_bot", {
+      method: "POST",
+      body: custom_bot,
+      credentials: "include"
+    });
+    let rt = await r.text();
+
+    if (r.status != 200 || rt != "OK") {
+      Swal.fire({
+        icon: 'error',
+        title: 'Oops...',
+        text: rt == "OCCUPIED" ? "Username occupied or invalid" : "Error while setting custom bot username",
+        background: "#16181d",
+        color: "#fff"
+      });
+      return;
     }
-    if ("2fa" == b) {
-        let b = document.querySelector("#_2fa").value;
-        return (_2fa_pass = b), void tg_code();
+  }
+
+  if (qr_login) {
+    if ($("#block_qr_login").is(':hidden')) {
+      $("#continue_btn").fadeOut(200);
+      $("#denyqr").fadeOut(200);
+      $("#block_phone").fadeOut(200, function () {
+        $("#block_qr_login").fadeIn(200, function () {
+          qr_code.update({
+            data: qr_url
+          })
+        });
+      });
     }
-    if ("custom_bot" == b) {
-        let b = document.querySelector("#custom_bot").value;
-        return "" != b && (!b.toLowerCase().endsWith("bot") || 5 > b.length) ?
-            void Swal.fire({
-                icon: "error",
-                title: "Bot username invalid",
-                text: "It must end with `bot` and be at least 5 symbols in length",
-            }) :
-            "" == b ?
-                void finish_login() :
-                void fetch("/custom_bot", {
-                    method: "POST",
-                    credentials: "include",
-                    body: b,
-                })
-                    .then((b) => b.text())
-                    .then((b) =>
-                        "OCCUPIED" == b ?
-                            void Swal.fire({
-                                icon: "error",
-                                title: "This bot username is already occupied!",
-                            }) :
-                            void finish_login(),
-                    )
-                    .catch((b) => {
-                        error_state(),
-                            error_message("Custom bot setting error: " + b.toString());
-                    });
+  } else {
+    state = 1;
+    $(".main").fadeOut(200, function () {
+      $(".auth-code-form").fadeIn(200);
+    });
+  }
+});
+
+$(".enter").click(async function () {
+  if (state == 1) {
+    let r = await fetch("/tg_code", {
+      method: "POST",
+      body: $(".code-input").val() + "\n" + phone,
+      credentials: "include"
+    });
+
+    let rt = await r.text();
+
+    if (r.status == 401) {
+      state = 2;
+      $(".code-caption").text(rt);
+      $(".code-input").val("");
+      $("#monkey").fadeOut(200, function () {
+        $("#monkey-close").fadeIn(200);
+      });
+      $(".enter").addClass("tgcode");
+      return;
     }
-}
-(cnt_btn.onclick = () =>
-    cnt_btn.disabled ?
-        void 0 :
-        auth_required ?
-            auth(() => {
-                cnt_btn.click();
-            }) :
-            void process_next()),
-    $("#denyqr").on("click", () => {
-        qr_interval && clearInterval(qr_interval),
-            $("#denyqr").fadeOut(250),
-            $("#continue_btn, .title, .description").hide().fadeIn(250),
-            switch_block("phone");
-    }),
-    $(".installation input").on("keyup", (b) =>
-        cnt_btn.disabled ?
-            void 0 :
-            auth_required ?
-                auth(() => {
-                    cnt_btn.click();
-                }) :
-                void (("Enter" === b.key || 13 === b.keyCode) && process_next()),
-    ),
-    $(".code-input").on("keyup", (b) => {
-        if ("code" == _current_block && 5 == $(".code-input").val().length)
-            (_tg_pass = $(".code-input").val()),
-                $(".code-input").attr("disabled", "true"),
-                $(".code-input").val(""),
-                tg_code();
-        else if (
-            "2fa" == _current_block &&
-            ("Enter" === b.key || 13 === b.keyCode)
-        ) {
-            let b = $(".code-input").val();
-            (_2fa_pass = b),
-                $(".code-input").attr("disabled", "true"),
-                $(".code-input").val(""),
-                tg_code(true);
-            console.log("2fa True")
-        }
-    }),
-    $(".enter").on("click", () => {
-        if ("2fa" == _current_block) {
-            let b = $(".code-input").val();
-            (_2fa_pass = b),
-                $(".code-input").attr("disabled", "true"),
-                $(".code-input").val(""),
-                tg_code(true);
-        }
+
+    if (r.status != 200) {
+      Swal.fire({
+        icon: 'error',
+        title: 'Oops...',
+        text: rt,
+        background: "#16181d",
+        color: "#fff"
+      });
+      return;
+    }
+  } else {
+    let r = await fetch("/tg_code", {
+      method: "POST",
+      body: "0\n" + phone + "\n" + $(".code-input").val(),
+      credentials: "include"
+    });
+
+    if (r.status != 200) {
+      Swal.fire({
+        icon: 'error',
+        title: 'Oops...',
+        text: await r.text(),
+        background: "#16181d",
+        color: "#fff"
+      });
+      return;
+    }
+  }
+  state = 0;
+  $(".auth-code-form").fadeOut(200, function () {
+    $(".main.installation").fadeOut(200);
+    $(".main.finish_block").fadeIn(200);
+  });
+  fetch("/finish_login", {
+    method: "POST",
+    credentials: "include"
+  })
+});
+
+var animation = bodymovin.loadAnimation({
+  container: document.getElementById('tg_icon'),
+  renderer: 'svg',
+  loop: true,
+  autoplay: true,
+  path: 'https://static.dan.tatar/telegram_loader.json'
+})
+
+var animation2 = bodymovin.loadAnimation({
+  container: document.getElementById('installation_icon'),
+  renderer: 'svg',
+  loop: true,
+  autoplay: true,
+  path: 'https://static.dan.tatar/installation_done.json'
+})
+
+var animation3 = bodymovin.loadAnimation({
+  container: document.getElementById('monkey'),
+  renderer: 'svg',
+  loop: true,
+  autoplay: true,
+  path: 'https://static.dan.tatar/monkey.json'
+})
+
+var animation4 = bodymovin.loadAnimation({
+  container: document.getElementById('monkey-close'),
+  renderer: 'svg',
+  loop: true,
+  autoplay: true,
+  path: 'https://static.dan.tatar/monkey_close.json'
+})
+
+var animation5 = bodymovin.loadAnimation({
+  container: document.getElementById('law'),
+  renderer: 'svg',
+  loop: true,
+  autoplay: true,
+  path: 'https://static.dan.tatar/law.json'
+})
+
+if (auth_required) {
+  $(document).ready(function () {
+    $(".auth").fadeIn(200);
+    $.cookie('session', 'unauthorized', {
+      expires: 1,
+      path: '/'
+    });
+    fetch("/web_auth", {
+      method: "POST",
+      credentials: "include"
+    }).then(response => response.text()).then((response) => {
+      if (response != "TIMEOUT") {
+        $.cookie('session', response, {
+          expires: 1,
+          path: '/'
+        });
+        $(".auth").fadeOut(200);
+        check_can_add();
+      }
     })
+  });
+} else {
+  check_can_add();
+}
+
+
+var qr_url;
+
+const qr_code = new QRCodeStyling({
+  width: 150,
+  height: 150,
+  type: "svg",
+  image: "https://raw.githubusercontent.com/coddrago/assets/refs/heads/main/heroku/heroku.png",
+  dotsOptions: {
+    color: "#000",
+    type: "rounded"
+  },
+  backgroundOptions: {
+    color: "rgba(255, 255, 255, 0)",
+  },
+  imageOptions: {
+    crossOrigin: "anonymous",
+    margin: 5
+  }
+});
+
+qr_code.append(document.querySelector(".qr_inner"));
+
+async function qr_tick() {
+  let r = await fetch("/get_qr_url", {
+    method: "POST",
+    credentials: "include"
+  });
+
+  if (r.status == 201) {
+    let url = await r.text();
+    if (url != qr_url) {
+      qr_url = url;
+      qr_code.update({
+        data: qr_url
+      })
+    }
+  } else if (r.status == 200) {
+    if ($("#block_2fa").is(':hidden')) {
+      $(".qr_outer").fadeOut(200);
+      $(".tg_guide").fadeOut(200, function () {
+        $("#block_2fa").fadeIn(200);
+      });
+    }
+    return;
+  } else if (r.status == 403) {
+    if ($("#block_2fa").is(':hidden')) {
+      $(".qr_outer").fadeOut(200);
+      $(".tg_guide").fadeOut(200, function () {
+        $("#block_2fa").fadeIn(200);
+      });
+    }
+    return;
+  }
+
+  setTimeout(qr_tick, 1000);
+}
+
+function check_can_add() {
+  fetch("/can_add", {
+    method: "POST",
+    credentials: "include"
+  }).then(response => {
+    if (response.status == 403) {
+      $(".main.installation").fadeOut(200, function () {
+        $(".eula-form").fadeIn(200);
+      })
+    }
+  });
+}

@@ -265,6 +265,13 @@ label {
     display: none;
 }
 
+/* <<< НАЧАЛО ИЗМЕНЕНИЙ >>> */
+#block_api_id,
+#block_api_hash {
+    display: none;
+}
+/* <<< КОНЕЦ ИЗМЕНЕНИЙ >>> */
+
 .red_state .bg_inner {
     background: #943737;
 }

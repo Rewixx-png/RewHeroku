@@ -17,8 +17,8 @@
 #    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 # ©️ Dan Gazizullin, 2021-2023
-# This file is a part of Heroku Userbot
-# 🌐 https://github.com/hikariatama/Heroku
+# This file is a part of Hikka Userbot
+# 🌐 https://github.com/hikariatama/Hikka
 # You can redistribute it and/or modify it under the terms of the GNU AGPLv3
 # 🔑 https://www.gnu.org/licenses/agpl-3.0.html
 
@@ -28,15 +28,36 @@ import inspect
 import logging
 import os
 import subprocess
+import collections
+import string
+import re
+import time
 
 import aiohttp_jinja2
 import jinja2
 from aiohttp import web
+from herokutl.errors import (
+    FloodWaitError,
+    PasswordHashInvalidError,
+    PhoneCodeExpiredError,
+    PhoneCodeInvalidError,
+    SessionPasswordNeededError,
+    YouBlockedUserError,
+)
+from herokutl.password import compute_check
+from herokutl.sessions import MemorySession
+from herokutl.tl.functions.account import GetPasswordRequest
+from herokutl.tl.functions.auth import CheckPasswordRequest
+from herokutl.tl.functions.contacts import UnblockRequest
+from herokutl.utils import parse_phone
+
 
 from ..database import Database
 from ..loader import Modules
 from ..tl_cache import CustomTelegramClient
 from . import proxypass, root
+from .. import main, utils, version
+
 
 logger = logging.getLogger(__name__)
 
@@ -134,3 +155,142 @@ class Web(root.Web):
             status=301,
             headers={"Location": "https://i.imgur.com/IRAiWBo.jpeg"},
         )
+    
+    async def set_tg_api(self, request: web.Request) -> web.Response:
+        if not self._check_session(request):
+            return web.Response(status=401, body="Authorization required")
+
+        text = await request.text()
+
+        if not text:
+            api_id = "20045757"
+            api_hash = "7d3ea0c0d4725498789bd51a9ee02421"
+        else:
+            if len(text) < 36:
+                return web.Response(
+                    status=400,
+                    body="API ID and HASH pair has invalid length",
+                )
+
+            api_hash = text[:32]
+            api_id = text[32:]
+
+            if any(c not in string.hexdigits for c in api_hash) or any(
+                c not in string.digits for c in api_id
+            ):
+                return web.Response(
+                    status=400,
+                    body="You specified invalid API ID and/or API HASH",
+                )
+
+        main.save_config_key("api_id", int(api_id))
+        main.save_config_key("api_hash", api_hash)
+
+        self.api_token = collections.namedtuple("api_token", ("ID", "HASH"))(
+            api_id,
+            api_hash,
+        )
+
+        self.api_set.set()
+        return web.Response(body="ok")
+
+    async def web_auth(self, request: web.Request) -> web.Response:
+        if self._check_session(request):
+            return web.Response(body=request.cookies.get("session", "unauthorized"))
+
+        token = utils.rand(8)
+
+        markup = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="🔓 Authorize user",
+                        callback_data=f"authorize_web_{token}",
+                    )
+                ]
+            ]
+        )
+
+        ips = request.headers.get("X-FORWARDED-FOR", None) or request.remote
+        cities = []
+
+        for ip in re.findall(r"[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}", ips):
+            if ip not in self._ratelimit:
+                self._ratelimit[ip] = []
+
+            if (
+                len(
+                    list(
+                        filter(lambda x: time.time() - x < 3 * 60, self._ratelimit[ip])
+                    )
+                )
+                >= 3
+            ):
+                return web.Response(status=429)
+
+            self._ratelimit[ip] = list(
+                filter(lambda x: time.time() - x < 3 * 60, self._ratelimit[ip])
+            )
+
+            self._ratelimit[ip] += [time.time()]
+            try:
+                res = (
+                    await utils.run_sync(
+                        requests.get,
+                        f"https://freegeoip.app/json/{ip}",
+                    )
+                ).json()
+                cities += [
+                    f"<i>{utils.get_lang_flag(res['country_code'])} {res['country_name']}"
+                    f" {res['region_name']} {res['city']} {res['zip_code']}</i>"
+                ]
+            except Exception:
+                pass
+
+        cities = (
+            ("<b>🏢 Possible cities:</b>\n\n" + "\n".join(cities) + "\n")
+            if cities
+            else ""
+        )
+
+        ops = []
+
+        for user in self.client_data.values():
+            try:
+                bot = user[0].inline.bot
+                msg = await bot.send_message(
+                    chat_id=user[1].tg_id,
+                    text=(
+                        "🪐🔐 <b>Click button below to confirm web application"
+                        f" ops</b>\n\n<b>Client IP</b>: {ips}\n{cities}\n<i>If you did"
+                        " not request any codes, simply ignore this message</i>"
+                    ),
+                    disable_web_page_preview=True,
+                    reply_markup=markup,
+                )
+                ops += [
+                    functools.partial(
+                        bot.delete_message,
+                        chat_id=msg.chat.id,
+                        message_id=msg.message_id,
+                    )
+                ]
+            except Exception:
+                pass
+
+        session = f"heroku_{utils.rand(16)}"
+
+        if not ops:
+            return web.Response(body=session)
+
+        if not await main.heroku.wait_for_web_auth(token):
+            for op in ops:
+                await op()
+            return web.Response(body="TIMEOUT")
+
+        for op in ops:
+            await op()
+
+        self._sessions += [session]
+
+        return web.Response(body=session)

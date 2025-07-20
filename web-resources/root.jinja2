@@ -108,11 +108,13 @@
         </div>
       </div>
       {% endif %}
-      {% if skip_creds and not lavhost %}
+
+      <!-- <<< НАЧАЛО ИЗМЕНЕНИЙ >>> -->
+      {% if not skip_creds %}
       <div class="button" id="enter_api">
         <div class="horiz_center">
           <div class="vert_center">
-            Change API Creds
+            Use custom API creds
           </div>
 
           <div class="vert_center">
@@ -121,6 +123,8 @@
         </div>
       </div>
       {% endif %}
+      <!-- <<< КОНЕЦ ИЗМЕНЕНИЙ >>> -->
+
       <span id="block_api_id">
         <label class="api_id" for="api_id">Telegram API ID: </label>
         <input class="api_id" id="api_id" placeholder="••••" style="width: 4em;">
