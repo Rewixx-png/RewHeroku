@@ -231,7 +231,7 @@ class CoreMod(loader.Module):
             + "<blockquote expandable>"
             + "\n".join(
                 [
-                    (self.config["alias_emoji"] + f" <code>{i}</code> &lt;- {y}")
+                    (self.config["alias_emoji"] + f" <code>{i}</code> <- {y}")
                     for i, y in self.allmodules.aliases.items()
                 ]
             )
@@ -344,3 +344,101 @@ class CoreMod(loader.Module):
             reply_markup=self._markup,
         )
 
+    @loader.command()
+    async def addsession(self, message: Message):
+        """<reply to session string> - Add new account"""
+        reply = await message.get_reply_message()
+        if not reply or not reply.raw_text:
+            await utils.answer(message, "Ответьте на сообщение с сессионной строкой.")
+            return
+
+        session_string = reply.raw_text
+        
+        # Validate session string before proceeding
+        temp_client = CustomTelegramClient(StringSession(session_string), main.heroku.api_token.ID, main.heroku.api_token.HASH)
+        try:
+            await temp_client.connect()
+            new_user = await temp_client.get_me()
+            if not new_user:
+                raise Exception("Could not get user info from session.")
+        except Exception as e:
+            await utils.answer(message, f"<b>Invalid session string.</b>\n\n<pre>{e}</pre>")
+            return
+        finally:
+            await temp_client.disconnect()
+
+        session_id = str(uuid.uuid4())
+        
+        # Используем self.pointer для безопасной работы с БД
+        temp_sessions_pointer = self.pointer("temp_sessions", {})
+        temp_sessions_pointer[session_id] = session_string
+
+        text = (
+            "<b>Confirm Account Addition</b>\n\n"
+            f"You are about to add the account: <code>{new_user.first_name} (ID: {new_user.id})</code>.\n\n"
+            "Are you sure?"
+        )
+
+        await self.inline.form(
+            message=message,
+            text=text,
+            reply_markup=[
+                {
+                    "text": "✅ Approve",
+                    "callback": self._approve_add_session,
+                    "args": (session_id,),
+                },
+                {
+                    "text": "❌ Deny",
+                    "callback": self._deny_add_session,
+                    "args": (session_id,),
+                },
+            ],
+        )
+
+    async def _approve_add_session(self, call: InlineCall, session_id: str):
+        # Приостанавливаем автосохранение, чтобы избежать конфликтов
+        self.allmodules.autosaver_paused = True
+        logging.warning("Database autosaver paused for new account registration.")
+        
+        try:
+            temp_sessions_pointer = self.pointer("temp_sessions", {})
+            session_string = temp_sessions_pointer.pop(session_id, None)
+
+            if not session_string:
+                await call.edit("<b>Error:</b> Session not found or expired. Please try again.")
+                return
+
+            await call.edit("<b>✅ Аккаунт подтвержден.\n\nСохраняю сессию и начинаю перезагрузку...\nЭто может занять несколько минут.</b>")
+
+            try:
+                logging.info("Creating temporary client to save session...")
+                temp_client = CustomTelegramClient(StringSession(session_string), main.heroku.api_token.ID, main.heroku.api_token.HASH)
+                await temp_client.connect()
+                
+                logging.info("Saving new session to file...")
+                await main.heroku.save_client_session(temp_client, delay_restart=True)
+                
+                await temp_client.disconnect()
+                logging.info("Temporary client disconnected.")
+                
+                await asyncio.sleep(2)
+                
+                logging.info("Restarting userbot to apply new account...")
+                restart()
+            except Exception as e:
+                logger.exception("Failed to add account")
+                await call.edit(f"<b>Произошла ошибка при добавлении аккаунта:</b>\n\n<pre>{e}</pre>")
+
+        finally:
+            # Гарантированно возобновляем автосохранение
+            self.allmodules.autosaver_paused = False
+            logging.warning("Database autosaver resumed.")
+
+
+    async def _deny_add_session(self, call: InlineCall, session_id: str):
+        temp_sessions_pointer = self.pointer("temp_sessions", {})
+        if session_id in temp_sessions_pointer:
+            del temp_sessions_pointer[session_id]
+        
+        await call.edit("<b>Добавление аккаунта отклонено.</b>")

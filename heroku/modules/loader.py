@@ -32,11 +32,12 @@ from uuid import uuid4
 
 from herokutl.tl.tlobject import TLObject
 
-from . import security, utils, validators
-from .database import Database
-from .inline.core import InlineManager
-from .translations import Strings, Translator
-from .types import (
+# <<< НАЧАЛО ИСПРАВЛЕНИЯ >>>
+from .. import security, utils, validators
+from ..database import Database
+from ..inline.core import InlineManager
+from ..translations import Strings, Translator
+from ..types import (
     Command,
     ConfigValue,
     CoreOverwriteError,
@@ -56,6 +57,8 @@ from .types import (
     get_commands,
     get_inline_handlers,
 )
+# <<< КОНЕЦ ИСПРАВЛЕНИЯ >>>
+
 
 __all__ = [
     "Modules",
@@ -522,7 +525,6 @@ class Modules:
         self.inline = InlineManager(self.client, self._db, self)
         self.client.heroku_inline = self.inline
 
-    # <<< ИСПРАВЛЕНИЕ ЗДЕСЬ >>>
     @loop(interval=3, wait_before=True, autostart=True)
     async def _config_autosaver(self):
         if self.autosaver_paused:
@@ -532,7 +534,7 @@ class Modules:
             if (
                 not hasattr(mod, "config")
                 or not mod.config
-                or not isinstance(mod.config, loader.ModuleConfig)
+                or not isinstance(mod.config, ModuleConfig)
             ):
                 continue
 
@@ -547,7 +549,7 @@ class Modules:
             if (
                 not hasattr(lib, "config")
                 or not lib.config
-                or not isinstance(lib.config, loader.ModuleConfig)
+                or not isinstance(lib.config, ModuleConfig)
             ):
                 continue
 
@@ -741,7 +743,7 @@ class Modules:
 
     @property
     def _remove_core_protection(self) -> bool:
-        from . import main
+        from .. import main
 
         return self._db.get(main.__name__, "remove_core_protection", False)
 
@@ -882,7 +884,7 @@ class Modules:
 
     def get_prefix(self) -> str:
         """Get command prefix"""
-        from . import main
+        from .. import main
 
         key = main.__name__
         default = "."
