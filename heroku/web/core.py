@@ -160,7 +160,7 @@ class Web(root.Web):
             status=301,
             headers={"Location": "https://i.imgur.com/IRAiWBo.jpeg"},
         )
-    
+
     async def set_tg_api(self, request: web.Request) -> web.Response:
         if not self._check_session(request):
             return web.Response(status=401, body="Authorization required")
@@ -276,6 +276,27 @@ class Web(root.Web):
         db.set("heroku.inline", "custom_bot", text)
         return web.Response(body="OK")
 
+    async def _qr_login_poll(self):
+        logged_in = False
+        self._2fa_needed = False
+        logger.debug("Waiting for QR login to complete")
+        while not logged_in:
+            try:
+                logged_in = await self._qr_login.wait(10)
+            except asyncio.TimeoutError:
+                logger.debug("Recreating QR login")
+                try:
+                    await self._qr_login.recreate()
+                except SessionPasswordNeededError:
+                    self._2fa_needed = True
+                    return
+            except SessionPasswordNeededError:
+                self._2fa_needed = True
+                break
+
+        logger.debug("QR login completed. 2FA needed: %s", self._2fa_needed)
+        self._qr_login = True
+
     async def init_qr_login(self, request: web.Request) -> web.Response:
         if self.client_data and "LAVHOST" in os.environ:
             return web.Response(status=403, body="Forbidden by LavHost EULA")
@@ -325,7 +346,7 @@ class Web(root.Web):
         return web.Response(status=201, body=self._qr_login.url)
 
     def _get_client(self) -> CustomTelegramClient:
-        return CustomTelegramClient(
+        client = CustomTelegramClient(
             MemorySession(),
             self.api_token.ID,
             self.api_token.HASH,
@@ -338,6 +359,8 @@ class Web(root.Web):
             lang_code="en",
             system_lang_code="en-US",
         )
+        client.is_web = True
+        return client
 
     async def can_add(self, request: web.Request) -> web.Response:
         if self.client_data and "LAVHOST" in os.environ:

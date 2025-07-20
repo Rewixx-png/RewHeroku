@@ -22,12 +22,6 @@
 # You can redistribute it and/or modify it under the terms of the GNU AGPLv3
 # 🔑 https://www.gnu.org/licenses/agpl-3.0.html
 
-# ©️ Codrago, 2024-2025
-# This file is a part of Heroku Userbot
-# 🌐 https://github.com/coddrago/Heroku
-# You can redistribute it and/or modify it under the terms of the GNU AGPLv3
-# 🔑 https://www.gnu.org/licenses/agpl-3.0.html
-
 import argparse
 import asyncio
 import collections
@@ -239,17 +233,11 @@ def save_config_key(key: str, value: str) -> bool:
     :return: `True` on success, otherwise `False`
     """
     try:
-        # Try to open our newly created json config
         config = json.loads(CONFIG_PATH.read_text())
     except FileNotFoundError:
-        # If it doesn't exist, just default config to none
-        # It won't cause problems, bc after new save
-        # we will create new one
         config = {}
 
-    # Assign config value
     config[key] = value
-    # And save config
     CONFIG_PATH.write_text(json.dumps(config, indent=4))
     return True
 
@@ -263,12 +251,9 @@ def gen_port(cfg: str = "port", no8080: bool = False) -> int:
     if "DOCKER" in os.environ and not no8080:
         return 8080
 
-    # But for own server we generate new free port, and assign to it
     if port := get_config_key(cfg):
         return port
 
-    # If we didn't get port from config, generate new one
-    # First, try to randomly get port
     while port := random.randint(1024, 65536):
         if socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect_ex(
             ("localhost", port)
@@ -400,7 +385,7 @@ class InteractiveAuthRequired(Exception):
 
 def raise_auth():
     """Raises `InteractiveAuthRequired`"""
-    raise InteractiveAuthRequired()
+    raise InteractiveAuthRequired
 
 
 class Heroku:
@@ -469,9 +454,7 @@ class Heroku:
         """Get API Token from disk or environment"""
         api_token_type = collections.namedtuple("api_token", ("ID", "HASH"))
 
-        # Try to retrieve credintials from config, or from env vars
         try:
-            # Legacy migration
             if not get_config_key("api_id"):
                 api_id, api_hash = (
                     line.strip()
@@ -572,14 +555,12 @@ class Heroku:
             restart()
 
         client.session = session
-        # Set db attribute to this client in order to save
-        # custom bot nickname from web
         client.heroku_db = database.Database(client)
         await client.heroku_db.init()
 
         if delay_restart:
             client.disconnect()
-            await asyncio.sleep(3600)  # Will be restarted from web anyway
+            await asyncio.sleep(3600)
 
     async def _web_banner(self):
         """Shows web banner"""
@@ -603,18 +584,15 @@ class Heroku:
 
         return False
 
-    async def _handle_new_session(self, client: CustomTelegramClient):
+    async def _handle_new_session(self, client: CustomTelegramClient) -> bool:
         """
         Handles the logic for a newly created session.
         If --add-account is specified, it prints the session string and exits.
         Otherwise, it saves the session and restarts the userbot.
         """
         if self.arguments.add_account:
-            # Convert session to string and get user info
             session_string = StringSession.save(client.session)
             new_user = await client.get_me()
-
-            # Print instructions for the user
             print("\n\033[0;92m✅ Login successful!\033[0m")
             print(f"User ID: {new_user.id}")
             print("\nTo complete adding the account, do the following:")
@@ -623,16 +601,18 @@ class Heroku:
             print("3. Reply to that message with the command: .addsession")
             print("\n\033[0;93mSession string:\033[0m")
             print(session_string)
-
-            # Exit the script without restarting
             sys.exit(0)
-        else:
-            # Original behavior for the first-time setup
+        
+        is_web_client = getattr(client, "is_web", False)
+        await self.save_client_session(client, delay_restart=is_web_client)
+        
+        if not is_web_client:
             print_banner("success.txt")
             print("\033[0;92mLogged in successfully!\033[0m")
-            await self.save_client_session(client)
-            self.clients += [client]
-            return True
+            restart()
+
+        self.clients += [client]
+        return True
 
     async def _phone_login(self, client: CustomTelegramClient) -> bool:
         phone = input(
@@ -643,7 +623,6 @@ class Heroku:
 
         await client.start(phone)
 
-        # Use the new handler for the session
         return await self._handle_new_session(client)
 
     async def _initial_setup(self) -> bool:
@@ -759,7 +738,6 @@ class Heroku:
                     else:
                         break
             
-            # Use the new handler for the session
             return await self._handle_new_session(client)
 
         if not self.web.running.is_set():
@@ -811,7 +789,6 @@ class Heroku:
                 Path(session.filename).unlink(missing_ok=True)
                 self.sessions.remove(session)
             except (ValueError, ApiIdInvalidError):
-                # Bad API hash/ID
                 run_config()
                 return False
             except PhoneNumberInvalidError:
