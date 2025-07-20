@@ -1,4 +1,10 @@
 # Heroku Changelog
+## 🪐 Heroku 1.7.2
+- Исправлена критическая ошибка `NameError` в `loader.py`, приводившая к невозможности запуска юзербота.
+- Добавлена новая команда «.addsession»» (beta)
+- добавлен RewHost
+
+
 ## 🪐 Heroku 1.7.1
 - fixed bug with web 
 - fixed bug with executor

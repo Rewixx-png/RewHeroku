@@ -4,7 +4,7 @@ preview = true
 
 [tool.poetry]
 name = "heroku"
-version = "1.7.1"
+version = "1.7.2"
 description = "Telegram userbot focused on developer convenience"
 authors = ["codrago, t.me/codrago"]
 license = "GNU AGPLv3"
