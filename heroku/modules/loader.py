@@ -32,7 +32,7 @@ from uuid import uuid4
 
 from herokutl.tl.tlobject import TLObject
 
-# <<< ИСПРАВЛЕНИЕ ЗДЕСЬ: Добавляем явный импорт для решения NameError >>>
+# <<< ВОТ СТРОКА, КОТОРАЯ ИСПРАВЛЯЕТ ОШИБКУ >>>
 from .. import loader
 
 from . import security, utils, validators
@@ -520,7 +520,7 @@ class Modules:
         self.db = db
         self.translator = translator
         self.secure_boot = False
-        self.autosaver_paused = False  # Флаг для приостановки автосохранения
+        self.autosaver_paused = False
         asyncio.ensure_future(self._junk_collector())
         self.inline = InlineManager(self.client, self._db, self)
         self.client.heroku_inline = self.inline
