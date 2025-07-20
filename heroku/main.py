@@ -94,6 +94,7 @@ IS_USERLAND = "userland" in os.environ.get("USER", "")
 IS_JAMHOST = "JAMHOST" in os.environ
 IS_REWHOST = "REWHOST" in os.environ
 IS_WSL = False
+IS_REWHOST = "REWHOST" in os.environ
 IS_WINDOWS = False
 with contextlib.suppress(Exception):
     from platform import uname

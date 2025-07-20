@@ -13,7 +13,7 @@ ENV PYTHONUNBUFFERED=1 \
     VENV_PATH="/opt/pysetup/.venv" \
     \
     DOCKER=true \
-    REWHOST=true \
+    REWHOST=Lite \
     GIT_PYTHON_REFRESH=quiet
 
 # Устанавливаем системные зависимости, как и раньше
