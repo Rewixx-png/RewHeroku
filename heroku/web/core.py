@@ -51,13 +51,18 @@ from herokutl.tl.functions.auth import CheckPasswordRequest
 from herokutl.tl.functions.contacts import UnblockRequest
 from herokutl.utils import parse_phone
 
-
 from ..database import Database
 from ..loader import Modules
 from ..tl_cache import CustomTelegramClient
 from . import proxypass, root
 from .. import main, utils, version
+from .._internal import restart
 
+DATA_DIR = (
+    "/data"
+    if "DOCKER" in os.environ
+    else os.path.normpath(os.path.join(utils.get_base_dir(), ".."))
+)
 
 logger = logging.getLogger(__name__)
 
@@ -155,7 +160,7 @@ class Web(root.Web):
             status=301,
             headers={"Location": "https://i.imgur.com/IRAiWBo.jpeg"},
         )
-    
+
     async def set_tg_api(self, request: web.Request) -> web.Response:
         if not self._check_session(request):
             return web.Response(status=401, body="Authorization required")
@@ -193,6 +198,316 @@ class Web(root.Web):
 
         self.api_set.set()
         return web.Response(body="ok")
+
+    async def check_session(self, request: web.Request) -> web.Response:
+        return web.Response(body=("1" if self._check_session(request) else "0"))
+
+    def wait_for_api_token_setup(self):
+        return self.api_set.wait()
+
+    def wait_for_clients_setup(self):
+        return self.clients_set.wait()
+
+    def _check_session(self, request: web.Request) -> bool:
+        return (
+            request.cookies.get("session", None) in self._sessions
+            if main.heroku.clients
+            else True
+        )
+
+    async def _check_bot(
+        self,
+        client: CustomTelegramClient,
+        username: str,
+    ) -> bool:
+        async with client.conversation("@BotFather", exclusive=False) as conv:
+            try:
+                m = await conv.send_message("/token")
+            except YouBlockedUserError:
+                await client(UnblockRequest(id="@BotFather"))
+                m = await conv.send_message("/token")
+
+            r = await conv.get_response()
+
+            await m.delete()
+            await r.delete()
+
+            if not hasattr(r, "reply_markup") or not hasattr(r.reply_markup, "rows"):
+                return False
+
+            for row in r.reply_markup.rows:
+                for button in row.buttons:
+                    if username != button.text.strip("@"):
+                        continue
+
+                    m = await conv.send_message("/cancel")
+                    r = await conv.get_response()
+
+                    await m.delete()
+                    await r.delete()
+
+                    return True
+
+    async def custom_bot(self, request: web.Request) -> web.Response:
+        if not self._check_session(request):
+            return web.Response(status=401)
+
+        text = await request.text()
+        client = self._pending_client
+        db = database.Database(client)
+        await db.init()
+
+        text = text.strip("@")
+
+        if any(
+            litera not in (string.ascii_letters + string.digits + "_")
+            for litera in text
+        ) or not text.lower().endswith("bot"):
+            return web.Response(body="OCCUPIED")
+
+        try:
+            await client.get_entity(f"@{text}")
+        except ValueError:
+            pass
+        else:
+            if not await self._check_bot(client, text):
+                return web.Response(body="OCCUPIED")
+
+        db.set("heroku.inline", "custom_bot", text)
+        return web.Response(body="OK")
+
+    async def init_qr_login(self, request: web.Request) -> web.Response:
+        if self.client_data and "LAVHOST" in os.environ:
+            return web.Response(status=403, body="Forbidden by LavHost EULA")
+
+        if not self._check_session(request):
+            return web.Response(status=401)
+
+        if self._pending_client is not None:
+            self._pending_client = None
+            self._qr_login = None
+            if self._qr_task:
+                self._qr_task.cancel()
+                self._qr_task = None
+
+            self._2fa_needed = False
+            logger.debug("QR login cancelled, new session created")
+
+        client = self._get_client()
+        self._pending_client = client
+
+        await client.connect()
+        self._qr_login = await client.qr_login()
+        self._qr_task = asyncio.ensure_future(self._qr_login_poll())
+
+        return web.Response(body=self._qr_login.url)
+
+    async def get_qr_url(self, request: web.Request) -> web.Response:
+        if not self._check_session(request):
+            return web.Response(status=401)
+
+        if self._qr_login is True:
+            if self._2fa_needed:
+                return web.Response(status=403, body="2FA")
+
+            await main.heroku.save_client_session(self._pending_client, delay_restart=True)
+            return web.Response(status=200, body="SUCCESS")
+
+        if self._qr_login is None:
+            await self.init_qr_login(request)
+
+        if self._qr_login is None:
+            return web.Response(
+                status=500,
+                body="Internal Server Error: Unable to initialize QR login",
+            )
+
+        return web.Response(status=201, body=self._qr_login.url)
+
+    def _get_client(self) -> CustomTelegramClient:
+        return CustomTelegramClient(
+            MemorySession(),
+            self.api_token.ID,
+            self.api_token.HASH,
+            connection=self.connection,
+            proxy=self.proxy,
+            connection_retries=None,
+            device_model=main.get_app_name(),
+            system_version="Windows 10",
+            app_version=".".join(map(str, __version__)) + " x64",
+            lang_code="en",
+            system_lang_code="en-US",
+        )
+
+    async def can_add(self, request: web.Request) -> web.Response:
+        if self.client_data and "LAVHOST" in os.environ:
+            return web.Response(status=403, body="Forbidden by host EULA")
+
+        return web.Response(status=200, body="Yes")
+
+    async def send_tg_code(self, request: web.Request) -> web.Response:
+        if not self._check_session(request):
+            return web.Response(status=401, body="Authorization required")
+
+        if self.client_data and "LAVHOST" in os.environ:
+            return web.Response(status=403, body="Forbidden by host EULA")
+
+        if self._pending_client:
+            return web.Response(status=208, body="Already pending")
+
+        text = await request.text()
+        phone = parse_phone(text)
+
+        if not phone:
+            return web.Response(status=400, body="Invalid phone number")
+
+        client = self._get_client()
+
+        self._pending_client = client
+
+        await client.connect()
+        try:
+            await client.send_code_request(phone)
+        except FloodWaitError as e:
+            return web.Response(status=429, body=self._render_fw_error(e))
+
+        return web.Response(body="ok")
+
+    @staticmethod
+    def _render_fw_error(e: FloodWaitError) -> str:
+        seconds, minutes, hours = (
+            e.seconds % 3600 % 60,
+            e.seconds % 3600 // 60,
+            e.seconds // 3600,
+        )
+        seconds, minutes, hours = (
+            f"{seconds} second(-s)",
+            f"{minutes} minute(-s) " if minutes else "",
+            f"{hours} hour(-s) " if hours else "",
+        )
+        return (
+            f"You got FloodWait for {hours}{minutes}{seconds}. Wait the specified"
+            " amount of time and try again."
+        )
+
+    async def qr_2fa(self, request: web.Request) -> web.Response:
+        if not self._check_session(request):
+            return web.Response(status=401)
+
+        text = await request.text()
+
+        logger.debug("2FA code received for QR login: %s", text)
+
+        try:
+            await self._pending_client._on_login(
+                (
+                    await self._pending_client(
+                        CheckPasswordRequest(
+                            compute_check(
+                                await self._pending_client(GetPasswordRequest()),
+                                text.strip(),
+                            )
+                        )
+                    )
+                ).user
+            )
+        except PasswordHashInvalidError:
+            logger.debug("Invalid 2FA code")
+            return web.Response(
+                status=403,
+                body="Invalid 2FA password",
+            )
+        except FloodWaitError as e:
+            logger.debug("FloodWait for 2FA code")
+            return web.Response(
+                status=421,
+                body=(self._render_fw_error(e)),
+            )
+
+        logger.debug("2FA code accepted, logging in")
+        
+        await main.heroku.save_client_session(self._pending_client, delay_restart=True)
+        return web.Response(status=200, body="SUCCESS")
+
+    async def tg_code(self, request: web.Request) -> web.Response:
+        if not self._check_session(request):
+            return web.Response(status=401)
+
+        text = await request.text()
+
+        if len(text) < 6:
+            return web.Response(status=400)
+
+        split = text.split("\n", 2)
+
+        if len(split) not in (2, 3):
+            return web.Response(status=400)
+
+        code = split[0]
+        phone = parse_phone(split[1])
+        password = split[2] if len(split) > 2 else None
+
+        if (
+            (len(code) != 5 and not password)
+            or any(c not in string.digits for c in code)
+            or not phone
+        ):
+            return web.Response(status=400)
+
+        if not password:
+            try:
+                await self._pending_client.sign_in(phone, code=code)
+            except SessionPasswordNeededError:
+                return web.Response(
+                    status=401,
+                    body="2FA Password required",
+                )
+            except PhoneCodeExpiredError:
+                return web.Response(status=404, body="Code expired")
+            except PhoneCodeInvalidError:
+                return web.Response(status=403, body="Invalid code")
+            except FloodWaitError as e:
+                return web.Response(
+                    status=421,
+                    body=(self._render_fw_error(e)),
+                )
+        else:
+            try:
+                await self._pending_client.sign_in(phone, password=password)
+            except PasswordHashInvalidError:
+                return web.Response(
+                    status=403,
+                    body="Invalid 2FA password",
+                )
+            except FloodWaitError as e:
+                return web.Response(
+                    status=421,
+                    body=(self._render_fw_error(e)),
+                )
+        
+        await main.heroku.save_client_session(self._pending_client, delay_restart=True)
+        return web.Response(status=200, body="SUCCESS")
+
+    async def finish_login(self, request: web.Request) -> web.Response:
+        if not self._check_session(request):
+            return web.Response(status=401)
+
+        if not self._pending_client:
+            return web.Response(status=400)
+
+        first_session = not bool(main.heroku.clients)
+
+        main.heroku.clients = list(set(main.heroku.clients + [self._pending_client]))
+        self._pending_client = None
+
+        self.clients_set.set()
+        
+        if not first_session:
+            logging.info("New account added, restarting...")
+            await asyncio.sleep(1)
+            restart()
+
+        return web.Response()
 
     async def web_auth(self, request: web.Request) -> web.Response:
         if self._check_session(request):
