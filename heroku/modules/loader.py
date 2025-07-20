@@ -32,9 +32,6 @@ from uuid import uuid4
 
 from herokutl.tl.tlobject import TLObject
 
-# <<< ВОТ СТРОКА, КОТОРАЯ ИСПРАВЛЯЕТ ОШИБКУ >>>
-from .. import loader
-
 from . import security, utils, validators
 from .database import Database
 from .inline.core import InlineManager
@@ -525,7 +522,8 @@ class Modules:
         self.inline = InlineManager(self.client, self._db, self)
         self.client.heroku_inline = self.inline
 
-    @loader.loop(interval=3, wait_before=True, autostart=True)
+    # <<< ИСПРАВЛЕНИЕ ЗДЕСЬ >>>
+    @loop(interval=3, wait_before=True, autostart=True)
     async def _config_autosaver(self):
         if self.autosaver_paused:
             return
