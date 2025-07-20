@@ -48,6 +48,12 @@ RUN git clone https://github.com/Rewixx-png/RewHeroku /data/Heroku
 WORKDIR /data/Heroku
 RUN git fetch && git checkout master && git pull
 
+RUN echo 'git+https://github.com/coddrago/heroku-tl' > requirements.txt
+
+RUN echo 'pycloudflared==0.2.0' >> requirements.txt
+
+RUN echo 'Pillow' >> requirements.txt
+
 RUN pip install --no-warn-script-location --no-cache-dir -U -r requirements.txt
 
 EXPOSE 8080
