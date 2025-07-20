@@ -66,9 +66,7 @@ class Brainfuck:
 
     def _eval(self, source: str):
         line = col = 0
-
         stk = []
-
         loop_open = False
 
         for c in source:
@@ -76,7 +74,6 @@ class Brainfuck:
                 if loop_open:
                     self._report_error("unexpected token '['", line, col)
                     return True
-
                 loop_open = True
                 stk.append("[")
             elif c == "]":
@@ -84,12 +81,10 @@ class Brainfuck:
                 if len(stk) == 0:
                     self._report_error("unexpected token ']'", line, col)
                     return True
-
                 stk.pop()
             elif c == "\n":
                 line += 1
                 col = -1
-
             col += 1
 
         if len(stk) != 0:
@@ -106,26 +101,21 @@ class Brainfuck:
                 if ptr == (len(self.data) - 1):
                     self._report_error("pointer out of range", line, col)
                     return True
-
                 ptr += 1
             elif source[current] == "<":
                 if ptr == 0:
                     self._report_error("pointer out of range", line, col)
                     return True
-
                 ptr -= 1
             elif source[current] == "+":
                 if self.data[ptr] >= 2**32:
                     self._report_error("cell overflow")
                     return True
-
                 self.data[ptr] += 1
-
             elif source[current] == "-":
                 if self.data[ptr] == 0:
                     self._report_error("cell underflow")
                     return True
-
                 self.data[ptr] -= 1
             elif source[current] == ".":
                 self.out += chr(self.data[ptr])
@@ -140,7 +130,6 @@ class Brainfuck:
             elif source[current] == "\n":
                 line += 1
                 col = -1
-
             col += 1
             current += 1
 
@@ -181,7 +170,6 @@ class Evaluator(loader.Module):
                     ),
                 ),
             )
-
             return
 
         if callable(getattr(result, "stringify", None)):
@@ -437,7 +425,7 @@ class Evaluator(loader.Module):
             )
 
     def censor(self, ret: str) -> str:
-        ret = ret.replace(str(self._client.heroku_me.phone), "&lt;phone&gt;")
+        ret = ret.replace(str(self._client.heroku_me.phone), "<phone>")
 
         if redis := os.environ.get("REDIS_URL") or main.get_config_key("redis_uri"):
             ret = ret.replace(redis, f'redis://{"*" * 26}')
@@ -451,8 +439,12 @@ class Evaluator(loader.Module):
                 f'{btoken.split(":")[0]}:{"*" * 26}',
             )
 
-        if htoken := self.lookup("loader").get("token", False):
+        # <<< НАЧАЛО ИСПРАВЛЕНИЯ >>>
+        # Ищем модуль по его настоящему имени класса 'LoaderMod'
+        loader_instance = self.lookup("LoaderMod")
+        if loader_instance and (htoken := loader_instance.get("token", False)):
             ret = ret.replace(htoken, f'eugeo_{"*" * 26}')
+        # <<< КОНЕЦ ИСПРАВЛЕНИЯ >>>
 
         ret = ret.replace(
             StringSession.save(self._client.session),
