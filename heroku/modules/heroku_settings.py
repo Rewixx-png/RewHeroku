@@ -944,7 +944,7 @@ class HerokuSettingsMod(loader.Module):
 
         text = (
             "<b>Confirm Account Addition</b>\n\n"
-            f"You are about to add the account: <h2>{new_user.first_name} (ID: {new_user.id})</code>.\n\n"
+            f"You are about to add the account: <code>{new_user.first_name} (ID: {new_user.id})</code>.\n\n"
             "Are you sure?"
         )
 
@@ -966,6 +966,7 @@ class HerokuSettingsMod(loader.Module):
         )
 
     async def _approve_add_session(self, call: InlineCall, session_id: str):
+        # Приостанавливаем автосохранение, чтобы избежать конфликтов
         self.allmodules.autosaver_paused = True
         logging.warning("Database autosaver paused for new account registration.")
         
@@ -1001,6 +1002,7 @@ class HerokuSettingsMod(loader.Module):
                 await call.edit(f"<b>Произошла ошибка при добавлении аккаунта:</b>\n\n<pre>{e}</pre>")
 
         finally:
+            # Гарантированно возобновляем автосохранение
             self.allmodules.autosaver_paused = False
             logging.warning("Database autosaver resumed.")
 
