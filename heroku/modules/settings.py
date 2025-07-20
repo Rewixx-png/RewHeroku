@@ -12,7 +12,7 @@
 
 import uuid
 import logging
-import asyncio # <<< НОВЫЙ ИМПОРТ
+import asyncio
 
 import herokutl
 from herokutl.extensions.html import CUSTOM_EMOJIS
@@ -22,6 +22,7 @@ from herokutl.sessions import StringSession
 from .. import loader, main, utils, version
 from ..inline.types import InlineCall
 from ..tl_cache import CustomTelegramClient
+from .._internal import restart # <<< НОВЫЙ ИМПОРТ
 import random
 
 
@@ -359,7 +360,6 @@ class CoreMod(loader.Module):
 
         session_string = reply.raw_text
         
-        # Validate session string before proceeding
         temp_client = CustomTelegramClient(StringSession(session_string), main.heroku.api_token.ID, main.heroku.api_token.HASH)
         try:
             await temp_client.connect()
@@ -412,26 +412,33 @@ class CoreMod(loader.Module):
                 await call.edit("<b>Error:</b> Session not found or expired. Please try again.")
                 return
 
-            await call.edit("<b>✅ Аккаунт подтвержден.\n\nСохраняю сессию и начинаю перезагрузку...\nЭто может занять несколько минут.</b>")
-
             try:
                 logging.info("Creating temporary client to save session...")
                 temp_client = CustomTelegramClient(StringSession(session_string), main.heroku.api_token.ID, main.heroku.api_token.HASH)
                 await temp_client.connect()
                 
                 logging.info("Saving new session to file...")
+                # delay_restart=True предотвращает немедленный перезапуск
                 await main.heroku.save_client_session(temp_client, delay_restart=True)
                 
                 await temp_client.disconnect()
                 logging.info("Temporary client disconnected.")
                 
-                logging.info("Restarting userbot to apply new account...")
-                restart()
-
                 # <<< НАЧАЛО ИСПРАВЛЕНИЯ >>>
-                # Добавляем долгую задержку, чтобы операционная система
-                # успела завершить процесс, прежде чем эта функция закончится.
-                await asyncio.sleep(3600)
+                await call.edit(
+                    "<b>✅ Аккаунт успешно добавлен!</b>\n\n"
+                    "Чтобы изменения вступили в силу, юзербот необходимо перезагрузить.\n\n"
+                    "<i>Если перезагрузка не начнется в течение 10 секунд, нажмите кнопку ниже.</i>",
+                    reply_markup=[
+                        {
+                            "text": "🔄 Перезагрузить юзербот",
+                            "callback": self.restart_from_callback,
+                        }
+                    ],
+                )
+
+                # Запускаем перезагрузку в фоновом режиме
+                asyncio.ensure_future(self.delayed_restart(call))
                 # <<< КОНЕЦ ИСПРАВЛЕНИЯ >>>
 
             except Exception as e:
@@ -441,6 +448,36 @@ class CoreMod(loader.Module):
         finally:
             self.allmodules.autosaver_paused = False
             logging.warning("Database autosaver resumed.")
+
+    # <<< НОВАЯ ФУНКЦИЯ ДЛЯ ОТЛОЖЕННОГО ПЕРЕЗАПУСКА >>>
+    async def delayed_restart(self, call: InlineCall):
+        await asyncio.sleep(2)  # Небольшая задержка перед рестартом
+        logging.info("Restarting userbot to apply new account...")
+        try:
+            restart()
+        except Exception:
+            # Если рестарт не удался, сообщаем об этом
+            await call.edit(
+                "<b>🔴 Автоматическая перезагрузка не удалась!</b>\n\n"
+                "Нажмите кнопку ниже, чтобы попробовать снова.",
+                reply_markup=[
+                    {
+                        "text": "🔄 Перезагрузить юзербот",
+                        "callback": self.restart_from_callback,
+                    }
+                ],
+            )
+
+    # <<< НОВАЯ ФУНКЦИЯ-ОБРАБОТЧИК ДЛЯ КНОПКИ >>>
+    async def restart_from_callback(self, call: InlineCall):
+        await call.edit("<b>🔄 Перезагружаюсь...</b>")
+        logging.info("Restarting userbot from callback button...")
+        try:
+            restart()
+            # Долгая задержка, чтобы этот процесс точно был убит
+            await asyncio.sleep(3600)
+        except Exception:
+            await call.edit("<b>🔴 Ошибка перезагрузки. Пожалуйста, перезагрузите вручную.</b>")
 
 
     async def _deny_add_session(self, call: InlineCall, session_id: str):
