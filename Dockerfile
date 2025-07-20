@@ -63,4 +63,4 @@ COPY . .
 # <<< КОНЕЦ ИЗМЕНЕНИЙ >>>
 
 EXPOSE 8080
-CMD ["python", "-m", "heroku", "--root"]
+CMD ["python", "-m", "heroku","--root"]
