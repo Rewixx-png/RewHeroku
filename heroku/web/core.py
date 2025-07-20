@@ -160,7 +160,7 @@ class Web(root.Web):
             status=301,
             headers={"Location": "https://i.imgur.com/IRAiWBo.jpeg"},
         )
-
+    
     async def set_tg_api(self, request: web.Request) -> web.Response:
         if not self._check_session(request):
             return web.Response(status=401, body="Authorization required")
