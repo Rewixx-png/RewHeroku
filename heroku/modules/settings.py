@@ -10,9 +10,9 @@
 # You can redistribute it and/or modify it under the terms of the GNU AGPLv3
 # 🔑 https://www.gnu.org/licenses/agpl-3.0.html
 
-# <<< НАЧАЛО ИСПРАВЛЕНИЯ >>>
 import uuid
 import logging
+import asyncio # <<< НОВЫЙ ИМПОРТ
 
 import herokutl
 from herokutl.extensions.html import CUSTOM_EMOJIS
@@ -21,13 +21,9 @@ from herokutl.sessions import StringSession
 
 from .. import loader, main, utils, version
 from ..inline.types import InlineCall
-from ..tl_cache import CustomTelegramClient # <--- ЭТОТ ИМПОРТ БЫЛ ПРОПУЩЕН
-# <<< КОНЕЦ ИСПРАВЛЕНИЯ >>>
-
+from ..tl_cache import CustomTelegramClient
 import random
 
-# ... (остальной код файла остается без изменений) ...
-# ... (просто скопируйте его из вашего исходного файла, так как ошибка только в импортах)
 
 @loader.tds
 class CoreMod(loader.Module):
@@ -378,7 +374,6 @@ class CoreMod(loader.Module):
 
         session_id = str(uuid.uuid4())
         
-        # Используем self.pointer для безопасной работы с БД
         temp_sessions_pointer = self.pointer("temp_sessions", {})
         temp_sessions_pointer[session_id] = session_string
 
@@ -406,7 +401,6 @@ class CoreMod(loader.Module):
         )
 
     async def _approve_add_session(self, call: InlineCall, session_id: str):
-        # Приостанавливаем автосохранение, чтобы избежать конфликтов
         self.allmodules.autosaver_paused = True
         logging.warning("Database autosaver paused for new account registration.")
         
@@ -431,16 +425,20 @@ class CoreMod(loader.Module):
                 await temp_client.disconnect()
                 logging.info("Temporary client disconnected.")
                 
-                await asyncio.sleep(2)
-                
                 logging.info("Restarting userbot to apply new account...")
                 restart()
+
+                # <<< НАЧАЛО ИСПРАВЛЕНИЯ >>>
+                # Добавляем долгую задержку, чтобы операционная система
+                # успела завершить процесс, прежде чем эта функция закончится.
+                await asyncio.sleep(3600)
+                # <<< КОНЕЦ ИСПРАВЛЕНИЯ >>>
+
             except Exception as e:
                 logger.exception("Failed to add account")
                 await call.edit(f"<b>Произошла ошибка при добавлении аккаунта:</b>\n\n<pre>{e}</pre>")
 
         finally:
-            # Гарантированно возобновляем автосохранение
             self.allmodules.autosaver_paused = False
             logging.warning("Database autosaver resumed.")
 
