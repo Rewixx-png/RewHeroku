@@ -25,6 +25,7 @@ from .. import loader, main, utils, version
 from ..inline.types import InlineCall
 from ..tl_cache import CustomTelegramClient
 from .._internal import restart
+from ..states.user_states import AddSessionState
 import random
 
 logger = logging.getLogger(__name__)
@@ -355,6 +356,9 @@ class CoreMod(loader.Module):
     @loader.command()
     async def addsession(self, message: Message):
         """<reply to session string> - Add new account"""
+        state = self.inline._dp.current_state(
+            chat=message.chat_id, user=message.sender_id
+        )
         reply = await message.get_reply_message()
         if not reply or not reply.raw_text:
             await utils.answer(message, "Ответьте на сообщение с сессионной строкой.")
@@ -381,40 +385,103 @@ class CoreMod(loader.Module):
             )
             return
         finally:
-            await temp_client.disconnect()
+            if temp_client.is_connected():
+                await temp_client.disconnect()
 
-        session_filename = f"heroku-{new_user.id}.session"
+        await state.set_state(AddSessionState.confirming)
+        await state.update_data(
+            session_string=session_string,
+            user_id=new_user.id,
+            first_name=new_user.first_name,
+            dc_id=temp_client.session.dc_id,
+            server_address=temp_client.session.server_address,
+            port=temp_client.session.port,
+            auth_key=temp_client.session.auth_key,
+        )
+
+        text = (
+            "<b>Confirm Account Addition</b>\n\n"
+            "You are about to add the account:"
+            f" <code>{new_user.first_name} (ID: {new_user.id})</code>.\n\n"
+            "Are you sure?"
+        )
+
+        await self.inline.form(
+            message=msg,
+            text=text,
+            reply_markup=[
+                {"text": "✅ Approve", "callback": self._approve_add_session},
+                {"text": "❌ Deny", "callback": self._deny_add_session},
+            ],
+        )
+
+    @loader.callback_handler(state=AddSessionState.confirming)
+    async def _approve_add_session(self, call: InlineCall):
+        state = self.inline._dp.current_state(
+            chat=call.chat_id, user=call.from_user.id
+        )
+        data = await state.get_data()
+        user_id = data.get("user_id")
+        first_name = data.get("first_name")
+
+        if not all(k in data for k in ["session_string", "user_id", "first_name"]):
+            await call.edit(
+                "<b>Error:</b> Session data lost. Please try again."
+            )
+            await state.finish()
+            return
+
+        session_filename = f"heroku-{user_id}.session"
         destination_path = os.path.join(main.BASE_DIR, session_filename)
         
         if os.path.exists(destination_path):
-            await utils.answer(
-                msg,
-                f"<b>⚠️ Аккаунт {new_user.first_name} (<code>{new_user.id}</code>) уже"
+            await call.edit(
+                f"<b>⚠️ Аккаунт {first_name} (<code>{user_id}</code>) уже"
                 " добавлен. Перезагрузка не требуется.</b>",
             )
+            await state.finish()
             return
-
-        # Создаем временный файл в текущей директории
-        temp_session_file = f"temp_session_for_{new_user.id}.session"
-        sqlite_session = SQLiteSession(temp_session_file)
-        sqlite_session.set_dc(
-            temp_client.session.dc_id,
-            temp_client.session.server_address,
-            temp_client.session.port,
+        
+        await call.edit(
+            f"<b>✅ Аккаунт {first_name} подтвержден.\n\n"
+            "Сохраняю сессию и начинаю перезагрузку...\n"
+            "Это может занять несколько минут.</b>"
         )
-        sqlite_session.auth_key = temp_client.session.auth_key
-        sqlite_session.save()
-        
-        # Закрываем соединение с временной БД, чтобы избежать ошибок
-        sqlite_session._conn.close()
 
-        # Перемещаем файл в нужное место
-        os.rename(temp_session_file, destination_path)
-        
-        await utils.answer(
-            msg,
-            f"<b>✅ Аккаунт {new_user.first_name} (<code>{new_user.id}</code>) успешно"
-            " добавлен!\n\n🔄 Перезагружаюсь, чтобы применить изменения...</b>",
+        try:
+            # Создаем и сохраняем сессию в файл SQLite
+            sqlite_session = SQLiteSession(destination_path)
+            sqlite_session.set_dc(
+                data["dc_id"],
+                data["server_address"],
+                data["port"],
+            )
+            sqlite_session.auth_key = data["auth_key"]
+            sqlite_session.save()
+            sqlite_session._conn.close()
+
+            logging.info(f"Session for user {user_id} saved to {destination_path}")
+            
+            await asyncio.sleep(2)
+            
+            logging.info("Restarting userbot to apply new account...")
+            restart()
+            
+            # Долгая задержка, чтобы этот процесс точно был убит
+            await asyncio.sleep(3600)
+        except sqlite3.OperationalError as e:
+            logger.exception("Database is locked, failed to add session.")
+            await call.edit(f"<b>❌ Ошибка: База данных заблокирована.</b>\n<pre>{e}</pre>")
+        except Exception as e:
+            logger.exception("Failed to add account")
+            await call.edit(f"<b>Произошла ошибка при добавлении аккаунта:</b>\n\n<pre>{e}</pre>")
+        finally:
+            await state.finish()
+
+    @loader.callback_handler(state=AddSessionState.confirming)
+    async def _deny_add_session(self, call: InlineCall):
+        state = self.inline._dp.current_state(
+            chat=call.chat_id, user=call.from_user.id
         )
-        
-        restart()
+        await state.finish()
+        await call.edit("<b>Добавление аккаунта отклонено.</b>")
