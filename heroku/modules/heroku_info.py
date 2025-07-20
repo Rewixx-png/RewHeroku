@@ -12,13 +12,13 @@
 
 import git
 import time
+import git
 import psutil
 import os
 import glob
 import requests
 import re
 import emoji
-import asyncio
 
 from bs4 import BeautifulSoup
 from typing import Optional
@@ -30,7 +30,6 @@ from herokutl.utils import get_display_name
 from .. import loader, utils, version
 import platform as lib_platform
 import getpass
-
 
 @loader.tds
 class HerokuInfoMod(loader.Module):
@@ -44,11 +43,13 @@ class HerokuInfoMod(loader.Module):
                 "custom_message",
                 doc=lambda: self.strings("_cfg_cst_msg"),
             ),
+
             loader.ConfigValue(
                 "banner_url",
                 "https://raw.githubusercontent.com/coddrago/assets/refs/heads/main/heroku/heroku_info.png",
                 lambda: self.strings("_cfg_banner"),
             ),
+
             loader.ConfigValue(
                 "show_heroku",
                 True,
@@ -100,6 +101,15 @@ class HerokuInfoMod(loader.Module):
         return metatag['content']
 
     def _render_info(self, start: float) -> str:
+        TARIFFS = {
+            'free': 300,
+            'lite': 300,
+            'basic': 600,
+            'large': 1200,
+        }
+        current_tariff = os.environ.get('REWHOSTt', 'free').lower()
+        ram_tariff = TARIFFS.get(current_tariff, 300)
+
         try:
             repo = git.Repo(search_parent_directories=True)
             diff = repo.git.log([f"HEAD..origin/{version.branch}", "--oneline"])
@@ -156,7 +166,7 @@ class HerokuInfoMod(loader.Module):
                 upd=upd,
                 uptime=utils.formatted_uptime(),
                 cpu_usage=utils.get_cpu_usage(),
-                ram_usage=f"{utils.get_ram_usage()} MB",
+                ram_usage=f"~{utils.get_ram_usage()} MB / {ram_tariff} MB",
                 branch=version.branch,
                 hostname=lib_platform.node(),
                 user=getpass.getuser(),
@@ -177,7 +187,7 @@ class HerokuInfoMod(loader.Module):
                 f' {self.strings("cpu_usage")}:'
                 f"</b> <i>~{utils.get_cpu_usage()} %</i>\n<b>{{}}"
                 f' {self.strings("ram_usage")}:'
-                f"</b> <i>~{utils.get_ram_usage()} MB</i>\n<b>{{}}</b>"
+                 f"</b> <i>~{utils.get_ram_usage()} MB / {ram_tariff} MB</i>\n<b>{{}}</b>"
             ).format(
                 (
                     utils.get_platform_emoji()
@@ -273,46 +283,35 @@ class HerokuInfoMod(loader.Module):
     @loader.command()
     async def infocmd(self, message: Message):
         start = time.perf_counter_ns()
-        
         if self.config['switchInfo']:
             if self._get_info_photo(start) is None:
-                await utils.answer(message, self.strings["incorrect_img_format"])
+                await utils.answer(
+                    message, 
+                    self.strings["incorrect_img_format"]
+                )
                 return
+           
             await utils.answer_file(
                 message,
                 self._get_info_photo(start),
                 reply_to=getattr(message, "reply_to_msg_id", None),
             )
-            return
-        
-        text = self._render_info(start)
-        kwargs = {
-            "file": self.config["banner_url"],
-            "reply_to": getattr(message, "reply_to_msg_id", None),
-        }
-
-        # <<< НАЧАЛО ИСПРАВЛЕНИЯ >>>
-        if self.config["custom_message"] and '{ping}' in self.config["custom_message"]:
-            # 1. Отправляем временное сообщение, чтобы замерить пинг
-            placeholder = await utils.answer(message, self.config["ping_emoji"])
-            await asyncio.sleep(0.5) # Даем Telegram время обработать
-            
-            # 2. Удаляем временное сообщение
-            await placeholder.delete()
-            
-            # 3. Отправляем финальное сообщение с картинкой как новое сообщение
-            # Мы используем message.peer_id и reply_to от ОРИГИНАЛЬНОГО .info сообщения
-            await self._client.send_file(
-                message.peer_id,
-                file=kwargs["file"],
-                caption=text,
-                reply_to=kwargs["reply_to"],
-                link_preview=False,
+        elif self.config["custom_message"] is None:
+            await utils.answer(
+                message,
+                self._render_info(start),
+                file = self.config["banner_url"],
+                reply_to=getattr(message, "reply_to_msg_id", None),
             )
         else:
-            # Если {ping} не нужен, просто редактируем, как и раньше
-            await utils.answer(message, text, **kwargs)
-        # <<< КОНЕЦ ИСПРАВЛЕНИЯ >>>
+            if '{ping}' in self.config["custom_message"]:
+                message = await utils.answer(message, self.config["ping_emoji"])
+            await utils.answer(
+                message,
+                self._render_info(start),
+                file = self.config["banner_url"],
+                reply_to=getattr(message, "reply_to_msg_id", None),
+            )
 
     @loader.command()
     async def herokuinfo(self, message: Message):
