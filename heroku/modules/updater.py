@@ -419,7 +419,7 @@ class UpdaterMod(loader.Module):
 
         self.set("do_not_create", True)
 
-    async def _add_folder(self):
+  # async def _add_folder(self):
         folders = await self._client(GetDialogFiltersRequest())
 
         if any(getattr(folder, "title", None) == "heroku" for folder in folders.filters):
