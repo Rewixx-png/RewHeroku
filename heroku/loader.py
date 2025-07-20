@@ -524,7 +524,7 @@ class Modules:
         self.inline = InlineManager(self.client, self._db, self)
         self.client.heroku_inline = self.inline
 
-    @loader.loop(interval=3, wait_before=True, autostart=True)
+    @loop(interval=3, wait_before=True, autostart=True)
     async def _config_autosaver(self):
         # <<< НАЧАЛО ИЗМЕНЕНИЙ >>>
         if self.autosaver_paused:
