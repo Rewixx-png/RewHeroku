@@ -80,7 +80,7 @@ class LoaderMod(loader.Module):
             ),
             loader.ConfigValue(
                 "ADDITIONAL_REPOS",
-                [https://mods.kmoell.live],
+                ['https://mods.kmoell.live'],
                 lambda: self.strings("add_repo_config_doc"),
                 validator=loader.validators.Series(validator=loader.validators.Link()),
             ),
