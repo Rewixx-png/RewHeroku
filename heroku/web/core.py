@@ -57,7 +57,7 @@ from ..tl_cache import CustomTelegramClient
 from . import proxypass, root
 from .. import main, utils, version
 from .._internal import restart
-from ..version import __version__ # <<< ВОТ ЭТА СТРОКА ИСПРАВИТ ОШИБКУ
+from ..version import __version__
 
 DATA_DIR = (
     "/data"
@@ -386,12 +386,12 @@ class Web(root.Web):
             return web.Response(status=400, body="Invalid phone number")
 
         client = self._get_client()
-
         self._pending_client = client
 
-        await client.connect()
+        # <<< ИСПРАВЛЕНИЕ: Гарантируем подключение >>>
+        await self._pending_client.connect()
         try:
-            await client.send_code_request(phone)
+            await self._pending_client.send_code_request(phone)
         except FloodWaitError as e:
             return web.Response(status=429, body=self._render_fw_error(e))
 
@@ -419,10 +419,11 @@ class Web(root.Web):
             return web.Response(status=401)
 
         text = await request.text()
-
         logger.debug("2FA code received for QR login: %s", text)
 
         try:
+            # <<< ИСПРАВЛЕНИЕ: Гарантируем подключение >>>
+            await self._pending_client.connect()
             await self._pending_client._on_login(
                 (
                     await self._pending_client(
@@ -449,7 +450,6 @@ class Web(root.Web):
             )
 
         logger.debug("2FA code accepted, logging in")
-        
         await main.heroku.save_client_session(self._pending_client, delay_restart=True)
         return web.Response(status=200, body="SUCCESS")
 
@@ -458,12 +458,10 @@ class Web(root.Web):
             return web.Response(status=401)
 
         text = await request.text()
-
         if len(text) < 6:
             return web.Response(status=400)
 
         split = text.split("\n", 2)
-
         if len(split) not in (2, 3):
             return web.Response(status=400)
 
@@ -477,37 +475,28 @@ class Web(root.Web):
             or not phone
         ):
             return web.Response(status=400)
+        
+        # <<< ИСПРАВЛЕНИЕ: Гарантируем подключение >>>
+        await self._pending_client.connect()
 
         if not password:
             try:
                 await self._pending_client.sign_in(phone, code=code)
             except SessionPasswordNeededError:
-                return web.Response(
-                    status=401,
-                    body="2FA Password required",
-                )
+                return web.Response(status=401, body="2FA Password required")
             except PhoneCodeExpiredError:
                 return web.Response(status=404, body="Code expired")
             except PhoneCodeInvalidError:
                 return web.Response(status=403, body="Invalid code")
             except FloodWaitError as e:
-                return web.Response(
-                    status=421,
-                    body=(self._render_fw_error(e)),
-                )
+                return web.Response(status=421, body=(self._render_fw_error(e)))
         else:
             try:
                 await self._pending_client.sign_in(phone, password=password)
             except PasswordHashInvalidError:
-                return web.Response(
-                    status=403,
-                    body="Invalid 2FA password",
-                )
+                return web.Response(status=403, body="Invalid 2FA password")
             except FloodWaitError as e:
-                return web.Response(
-                    status=421,
-                    body=(self._render_fw_error(e)),
-                )
+                return web.Response(status=421, body=(self._render_fw_error(e)))
         
         await main.heroku.save_client_session(self._pending_client, delay_restart=True)
         return web.Response(status=200, body="SUCCESS")
