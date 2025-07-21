@@ -8,7 +8,7 @@
 # █ █ █                 Userbot management module                   █ █ █
 # █ █ █                                                             █ █ █
 # █ █ █                  meta developer: @RewiX_X                   █ █ █
-# █ █ █               https://github.com/Rewixx-png                  █ █ █
+# █ █ █               https://github.com/Rewixx-png                   █ █ █
 # █ █ █                                                             █ █ █
 # █ █ █▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄█ █ █
 # █ █▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄█ █
@@ -18,8 +18,9 @@ import aiohttp
 import asyncio
 import typing
 from .. import loader, utils
+# <<< ИСПРАВЛЕНИЕ: Правильный импорт типа Message и InlineCall >>>
 from herokutl.tl.types import Message
-from ..inline.types import InlineQuery, ChosenInlineResult
+from ..inline.types import InlineCall, InlineQuery
 
 @loader.tds
 class RewHostBridgeMod(loader.Module):
@@ -43,7 +44,6 @@ class RewHostBridgeMod(loader.Module):
         ),
         "no_containers": "🚫 У вас нет активных UserBot'ов на хостинге.",
         "action_success": "✅ Действие <code>{action}</code> для <b>{name}</b> успешно запущено.",
-        "action_confirmed": "✅ Действие «{action}» для <b>{name}</b> подтверждено и будет выполнено в фоновом режиме.",
         "logs_caption": "📋 Последние {lines} строк логов для <b>{name}</b>:",
         "inline_manage": "⚙️ Управление «{name}»",
         "inline_status_desc": "Статус: {status} {status_emoji} | Нажмите для управления",
@@ -51,12 +51,12 @@ class RewHostBridgeMod(loader.Module):
         "inline_stop": "⏹️ Остановить",
         "inline_restart": "🔄 Перезапустить",
         "inline_logs": "📋 Логи (в лс)",
-        "inline_status": "📊 Статус",
         "inline_back": "⬅️ Назад к списку",
         "inline_no_key_title": "🚫 API-ключ не настроен",
         "inline_no_key_desc": "Добавьте ключ через .config RewHostBridge",
         "inline_loading": "⏳ Загрузка...",
         "inline_logs_sent": "✅ Логи для «{name}» отправлены вам в личные сообщения.",
+        "action_in_progress": "⏳ Выполняю: {action}...",
     }
 
     def __init__(self):
@@ -95,7 +95,6 @@ class RewHostBridgeMod(loader.Module):
             return {"error": f"Network error: {e}"}
 
     async def _get_container(self, message: Message, args: list) -> typing.Optional[dict]:
-        """Получает контейнер по ID или единственный, если ID не указан."""
         response = await self._api_request("containers")
         if "error" in response:
             await utils.answer(message, response["error"])
@@ -127,6 +126,7 @@ class RewHostBridgeMod(loader.Module):
             await utils.answer(message, "🚫 Некорректный ID.")
             return None
 
+    # КОМАНДЫ ОСТАЮТСЯ ДЛЯ УДОБСТВА ИСПОЛЬЗОВАНИЯ
     @loader.command(alias="rh")
     async def rhstatus(self, message: Message):
         """[ID] - Показать статус вашего UserBot'а на хостинге"""
@@ -143,10 +143,8 @@ class RewHostBridgeMod(loader.Module):
         status_emojis = {"running": "🟢", "exited": "🔴", "restarting": "🟡"}
         
         await utils.answer(message, self.strings("container_info").format(
-            name=details.get('container_name', 'N/A'),
-            id=details.get('id', 'N/A'),
-            status=details.get('status', 'N/A'),
-            status_emoji=status_emojis.get(details.get('status'), '❓'),
+            name=details.get('container_name', 'N/A'), id=details.get('id', 'N/A'),
+            status=details.get('status', 'N/A'), status_emoji=status_emojis.get(details.get('status'), '❓'),
             server_name=details.get('server_info', {}).get('name', 'N/A'),
             tariff_name=details.get('tariff_info', {}).get('name', 'N/A').capitalize(),
             image_name=details.get('image_info', {}).get('name', 'N/A').capitalize(),
@@ -155,7 +153,7 @@ class RewHostBridgeMod(loader.Module):
             ram_usage=details.get('stats', {}).get('ram_usage', 'N/A'),
             ram_perc=details.get('stats', {}).get('ram_perc', 'N/A'),
         ))
-
+        
     @loader.command()
     async def rhstart(self, message: Message):
         """[ID] - Запустить ваш UserBot на хостинге"""
@@ -217,9 +215,10 @@ class RewHostBridgeMod(loader.Module):
         caption = self.strings("logs_caption").format(lines=lines, name=container['container_name'])
         await utils.answer_file(message, logs, caption, filename=f"{container['container_name']}.log")
     
+    # <<< НОВЫЙ ИНЛАЙН-ОБРАБОТЧИК >>>
     @loader.inline_handler("rh")
     async def rh_inline_handler(self, query: InlineQuery):
-        """Инлайн-обработчик для управления UserBot'ами."""
+        """Инлайн-панель управления юзерботами."""
         if not self.config["api_key"]:
             return await query.answer([
                 {
@@ -229,25 +228,39 @@ class RewHostBridgeMod(loader.Module):
                 }
             ])
         
-        q = query.query.strip().split()
+        response = await self._api_request("containers")
+        if "error" in response:
+            return await query.answer([{"title": "API Error", "description": response["error"], "message": self.strings("api_error").format(response["error"])}])
         
-        # Уровень 2: Меню управления конкретным контейнером
-        if len(q) > 1 and q[1] == "manage":
-            try:
-                container_id = int(q[2])
-            except (ValueError, IndexError):
-                return
-            
-            details_response = await self._api_request(f"container/{container_id}")
-            if "error" in details_response: return
-
+        containers = response.get("data", [])
+        if not containers:
+            return await query.answer([{"title": "No UserBots", "description": "You have no active UserBots on the hosting.", "message": self.strings("no_containers")}])
+        
+        results = []
+        status_emojis = {"running": "🟢", "exited": "🔴", "restarting": "🟡"}
+        
+        for c in containers:
+            details_response = await self._api_request(f"container/{c['id']}")
             details = details_response.get("data", {})
-            status_emojis = {"running": "🟢", "exited": "🔴", "restarting": "🟡"}
             
-            actions = [
-                {"id": f"rh_action_status_{container_id}", "title": self.strings("inline_status"), "msg": self.strings("container_info").format(
+            status = details.get('status', 'N/A')
+            status_emoji = status_emojis.get(status, '❓')
+            
+            buttons = []
+            if status == 'running':
+                buttons.append({"text": self.strings("inline_stop"), "callback": self.rh_callback_action, "args": ("stop", c['id'])})
+                buttons.append({"text": self.strings("inline_restart"), "callback": self.rh_callback_action, "args": ("restart", c['id'])})
+            else:
+                buttons.append({"text": self.strings("inline_start"), "callback": self.rh_callback_action, "args": ("start", c['id'])})
+            
+            buttons.append({"text": self.strings("inline_logs"), "callback": self.rh_callback_action, "args": ("logs", c['id'])})
+            
+            results.append({
+                "title": c['container_name'],
+                "description": self.strings("inline_status_desc").format(status=status, status_emoji=status_emoji),
+                "message": self.strings("container_info").format(
                     name=details.get('container_name', 'N/A'), id=details.get('id', 'N/A'),
-                    status=details.get('status', 'N/A'), status_emoji=status_emojis.get(details.get('status'), '❓'),
+                    status=status, status_emoji=status_emoji,
                     server_name=details.get('server_info', {}).get('name', 'N/A'),
                     tariff_name=details.get('tariff_info', {}).get('name', 'N/A').capitalize(),
                     image_name=details.get('image_info', {}).get('name', 'N/A').capitalize(),
@@ -255,76 +268,73 @@ class RewHostBridgeMod(loader.Module):
                     cpu=details.get('stats', {}).get('cpu', 'N/A'),
                     ram_usage=details.get('stats', {}).get('ram_usage', 'N/A'),
                     ram_perc=details.get('stats', {}).get('ram_perc', 'N/A'),
-                )},
-                {"id": f"rh_action_logs_{container_id}", "title": self.strings("inline_logs"), "msg": self.strings("inline_logs_sent").format(name=details.get('container_name', 'N/A'))},
-            ]
-
-            if details.get('status') == 'running':
-                actions.append({"id": f"rh_action_stop_{container_id}", "title": self.strings("inline_stop"), "msg": self.strings("action_confirmed").format(action="stop", name=details.get('container_name', 'N/A'))})
-                actions.append({"id": f"rh_action_restart_{container_id}", "title": self.strings("inline_restart"), "msg": self.strings("action_confirmed").format(action="restart", name=details.get('container_name', 'N/A'))})
-            else:
-                actions.append({"id": f"rh_action_start_{container_id}", "title": self.strings("inline_start"), "msg": self.strings("action_confirmed").format(action="start", name=details.get('container_name', 'N/A'))})
-            
-            results = [{
-                "id": action["id"],
-                "title": action["title"],
-                "message": action["msg"]
-            } for action in actions]
-
-            # Кнопка "Назад"
-            results.append({
-                "id": "rh_action_back",
-                "title": self.strings("inline_back"),
-                "message": "...", # Не будет отправлено
-                "switch_inline_query_current_chat": "rh"
+                ),
+                "reply_markup": buttons
             })
             
-            return await query.answer(results)
+        await query.answer(results, cache_time=10)
 
-        # Уровень 1: Список контейнеров
-        containers_response = await self._api_request("containers")
-        if "error" in containers_response:
-            return await query.answer([{"title": "API Error", "description": containers_response["error"], "message": containers_response["error"]}])
-            
-        containers = containers_response.get("data", [])
-        if not containers:
-            return await query.answer([{"title": "No UserBots", "description": "You have no active UserBots on the hosting.", "message": self.strings("no_containers")}])
+    # <<< НОВЫЙ КОЛЛБЭК-ОБРАБОТЧИК >>>
+    @loader.callback_handler()
+    async def rh_callback_action(self, call: InlineCall):
+        """Обрабатывает нажатия кнопок из инлайн-меню."""
+        if not call.data: return
         
-        results = []
-        status_emojis = {"running": "🟢", "exited": "🔴", "restarting": "🟡"}
-        for c in containers:
-            status_emoji = status_emojis.get(c.get('status'), '❓')
-            results.append({
-                "id": f"rh_{c['id']}",
-                "title": c['container_name'],
-                "description": self.strings("inline_status_desc").format(status=c.get('status', 'N/A'), status_emoji=status_emoji),
-                "message": self.strings("inline_manage").format(name=c['container_name']),
-                "switch_inline_query_current_chat": f"rh manage {c['id']}"
-            })
-        
-        await query.answer(results, cache_time=5)
+        try:
+            action, container_id_str = call.data.split("_")
+            container_id = int(container_id_str)
+        except (ValueError, IndexError):
+            return # Не наш коллбэк
 
-    @loader.chosen_inline_handler()
-    async def rh_chosen_result_handler(self, result: ChosenInlineResult):
-        """Обрабатывает выбор действия из инлайн-меню."""
-        result_id = result.result_id
-        if not result_id.startswith("rh_action_"):
-            return
-
-        parts = result_id.split("_")
-        action = parts[2]
+        await call.answer(self.strings("action_in_progress").format(action=action))
         
-        if action in ["start", "stop", "restart"]:
-            container_id = int(parts[3])
-            await self._api_request(f"container/{container_id}/action", method="POST", data={"action": action})
-        elif action == "logs":
-            container_id = int(parts[3])
+        if action == "logs":
             logs_response = await self._api_request(f"container/{container_id}/logs", params={"lines": 200})
             if "error" in logs_response: return
             
-            container = (await self._api_request(f"container/{container_id}")).get("data")
-            caption = self.strings("logs_caption").format(lines=200, name=container.get('container_name', 'N/A'))
-            await self.client.send_file("me", logs_response.encode('utf-8'), caption=caption, attributes=[])
-
-
+            container_response = await self._api_request(f"container/{container_id}")
+            container_name = container_response.get("data", {}).get('container_name', 'N/A')
+            
+            caption = self.strings("logs_caption").format(lines=200, name=container_name)
+            await self.client.send_file("me", logs_response.encode('utf-8'), caption=caption)
+            await self.inline.bot.send_message(call.from_user.id, self.strings("inline_logs_sent").format(name=container_name))
+        else:
+            await self._api_request(f"container/{container_id}/action", method="POST", data={"action": action})
+        
+        # Обновляем инлайн-сообщение через 2 секунды
+        await asyncio.sleep(2)
+        
+        details_response = await self._api_request(f"container/{container_id}")
+        if "error" in details_response: return
+        
+        details = details_response.get("data", {})
+        status_emojis = {"running": "🟢", "exited": "🔴", "restarting": "🟡"}
+        status = details.get('status', 'N/A')
+        
+        buttons = []
+        if status == 'running':
+            buttons.append({"text": self.strings("inline_stop"), "callback": self.rh_callback_action, "args": ("stop", container_id)})
+            buttons.append({"text": self.strings("inline_restart"), "callback": self.rh_callback_action, "args": ("restart", container_id)})
+        else:
+            buttons.append({"text": self.strings("inline_start"), "callback": self.rh_callback_action, "args": ("start", container_id)})
+        
+        buttons.append({"text": self.strings("inline_logs"), "callback": self.rh_callback_action, "args": ("logs", container_id)})
+        
+        try:
+            await call.edit(
+                text=self.strings("container_info").format(
+                    name=details.get('container_name', 'N/A'), id=details.get('id', 'N/A'),
+                    status=status, status_emoji=status_emojis.get(status, '❓'),
+                    server_name=details.get('server_info', {}).get('name', 'N/A'),
+                    tariff_name=details.get('tariff_info', {}).get('name', 'N/A').capitalize(),
+                    image_name=details.get('image_info', {}).get('name', 'N/A').capitalize(),
+                    time_left=utils.formatted_uptime(details.get('remaining_seconds', 0)),
+                    cpu=details.get('stats', {}).get('cpu', 'N/A'),
+                    ram_usage=details.get('stats', {}).get('ram_usage', 'N/A'),
+                    ram_perc=details.get('stats', {}).get('ram_perc', 'N/A'),
+                ),
+                reply_markup=buttons
+            )
+        except Exception:
+            pass # Игнорируем, если сообщение не изменилось или удалено
 # --- END OF FILE RewHeroku-master/heroku/modules/rewhost_bridge.py ---
