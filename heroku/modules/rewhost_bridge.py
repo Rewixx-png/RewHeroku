@@ -18,9 +18,10 @@ import aiohttp
 import asyncio
 import typing
 import io
+from datetime import timedelta
 from .. import loader, utils
 from herokutl.tl.types import Message
-from ..inline.types import InlineCall, InlineQuery, InlineMessage
+from ..inline.types import InlineCall, InlineQuery
 
 @loader.tds
 class RewHostBridgeMod(loader.Module):
@@ -73,6 +74,29 @@ class RewHostBridgeMod(loader.Module):
             loader.ConfigValue("api_key", None, "API-ключ от @RewHostBot", validator=loader.validators.Hidden()),
             loader.ConfigValue("host_url", "https://rewixx.ru", "URL API хостинга", validator=loader.validators.Link())
         )
+
+    # <<< ИСПРАВЛЕНИЕ: Новая вспомогательная функция >>>
+    def _format_seconds(self, seconds: int) -> str:
+        """Форматирует секунды в дни, часы, минуты, секунды."""
+        if not isinstance(seconds, (int, float)) or seconds <= 0:
+            return "Время истекло"
+        td = timedelta(seconds=seconds)
+        days, remainder = divmod(td.seconds, 86400)
+        hours, remainder = divmod(remainder, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        
+        parts = []
+        if td.days > 0:
+            parts.append(f"{td.days} д")
+        if hours > 0:
+            parts.append(f"{hours} ч")
+        if minutes > 0:
+            parts.append(f"{minutes} м")
+        if not parts: # Если осталось меньше минуты
+             parts.append(f"{seconds} с")
+
+        return " ".join(parts)
+
 
     async def _api_request(self, endpoint: str, method: str = "GET", params: dict = None, data: dict = None) -> dict:
         if not self.config["api_key"]: return {"error": self.strings("no_key")}
@@ -132,13 +156,14 @@ class RewHostBridgeMod(loader.Module):
             details = details_response.get("data", {})
             status_emojis = {"running": "🟢", "exited": "🔴", "restarting": "🟡"}
             
+            # <<< ИСПРАВЛЕНИЕ: Вызываем новую функцию _format_seconds >>>
             text = self.strings("container_info").format(
                 name=details.get('container_name', 'N/A'), id=details.get('id', 'N/A'),
                 status=details.get('status', 'N/A'), status_emoji=status_emojis.get(details.get('status'), '❓'),
                 server_name=details.get('server_info', {}).get('name', 'N/A'),
                 tariff_name=details.get('tariff_info', {}).get('name', 'N/A').capitalize(),
                 image_name=details.get('image_info', {}).get('name', 'N/A').capitalize(),
-                time_left=utils.formatted_uptime(details.get('remaining_seconds', 0)),
+                time_left=self._format_seconds(details.get('remaining_seconds', 0)),
                 cpu=details.get('stats', {}).get('cpu', 'N/A'),
                 ram_usage=details.get('stats', {}).get('ram_usage', 'N/A'),
                 ram_perc=details.get('stats', {}).get('ram_perc', 'N/A'),
@@ -262,7 +287,6 @@ class RewHostBridgeMod(loader.Module):
         else:
             await self._interactive_selector(message, "logs")
 
-    # <<< ИСПРАВЛЕНИЕ: Декоратор убран. Теперь это обычный метод. >>>
     async def rh_interactive_callback(self, call: InlineCall, action: str, container_id: int):
         """Обрабатывает нажатия кнопок из интерактивного селектора."""
         await self._perform_action(call, action, container_id)
