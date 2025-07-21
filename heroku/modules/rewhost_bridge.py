@@ -204,14 +204,4 @@ class RewHostBridgeMod(loader.Module):
         caption = self.strings("logs_caption").format(lines=lines, name=container['container_name'])
         await utils.answer_file(message, logs, caption, filename=f"{container['container_name']}.log")
 
-# --- END OF FILE RewHeroku-master/heroku/modules/rewhost_bridge.py ---```
-
-### Что было исправлено:
-
-1.  **Импорт `Message`:** В самом начале файла добавлена строка `from herokutl.tl.types import Message`.
-2.  **Типизация:** Во всех командах (`rhstatus`, `rhstart` и т.д.) и во вспомогательной функции `_get_container` неверный тип `loader.Message` заменен на правильный `Message`.
-3.  **Алиас:** Добавлен декоратор `@loader.command(alias="rh")` для команды `rhstatus`, чтобы она была доступна и по короткой команде `.rh`.
-4.  **Тип возврата:** Улучшен тип возврата в `_get_container` на `typing.Optional[dict]`, что более современно и точно.
-5.  **Обработка ошибок API:** Немного улучшена обработка ошибок от API, чтобы пользователю было понятнее, что пошло не так.
-
-Теперь этот модуль должен без проблем загрузиться в ваш юзербот RewHeroku и начать работать.
+# --- END OF FILE RewHeroku-master/heroku/modules/rewhost_bridge.py ---
