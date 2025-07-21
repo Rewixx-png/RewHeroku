@@ -78,7 +78,7 @@
     <div class="description">Incomprehensibly <span style="color:#c54245">the best</span> userbot<br><span
         style="color: #18cc18; display: none" class="authorized">Authorized!</span></div>
     <div class="center">
-      <!-- <<< НАЧАЛО ИЗМЕНЕНИЙ >>> -->
+      <!-- <<< НАЧАЛО МОДИФИКАЦИЙ >>> -->
       {% if not tg_done %}
       <!-- Если ни один аккаунт еще не добавлен, показываем полную настройку -->
       <div class="button" id="get_started">
@@ -107,10 +107,19 @@
       </div>
       {% endif %}
       {% else %}
-        <!-- Если аккаунт уже добавлен, просто показываем сообщение об успехе -->
-        <!-- Поля ввода и кнопки скрыты, т.к. вход уже выполнен -->
+        <!-- Если аккаунт уже добавлен, показываем кнопку для добавления нового -->
+        <div class="button" id="add_another_account">
+            <div class="horiz_center">
+                <div class="vert_center">
+                    Add another account
+                </div>
+                <div class="vert_center">
+                    <i class="gg-add"></i>
+                </div>
+            </div>
+        </div>
       {% endif %}
-      <!-- <<< КОНЕЦ ИЗМЕНЕНИЙ >>> -->
+      <!-- <<< КОНЕЦ МОДИФИКАЦИЙ >>> -->
       
       <span id="block_api_id">
         <label class="api_id" for="api_id">Telegram API ID: </label>
