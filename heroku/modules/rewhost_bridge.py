@@ -87,13 +87,48 @@ class RewHostBridgeMod(loader.Module):
         except asyncio.TimeoutError: return {"error": "API request timed out."}
         except aiohttp.ClientError as e: return {"error": f"Network error: {e}"}
 
+    async def _get_container(self, message: Message, args: list) -> typing.Optional[dict]:
+        response = await self._api_request("containers")
+        if "error" in response:
+            await utils.answer(message, response["error"])
+            return None
+        
+        containers = response.get("data", [])
+        
+        if not containers:
+            await utils.answer(message, self.strings("no_containers"))
+            return None
+
+        if not args:
+            if len(containers) == 1:
+                return containers[0]
+            
+            text = "У вас несколько UserBot'ов. Укажите ID:\n\n"
+            text += "\n".join([f"• <code>{c['container_name']}</code> (ID: <code>{c['id']}</code>)" for c in containers])
+            await utils.answer(message, text)
+            return None
+        
+        try:
+            container_id = int(args[0])
+            container = next((c for c in containers if c['id'] == container_id), None)
+            if not container:
+                await utils.answer(message, f"🚫 UserBot с ID <code>{container_id}</code> не найден.")
+                return None
+            return container
+        except (ValueError, IndexError):
+            await utils.answer(message, "🚫 Некорректный ID.")
+            return None
+
     async def _perform_action(self, message_or_call: typing.Union[Message, InlineCall], action: str, container_id: int, lines: int = 100):
-        """Выполняет действие и обновляет сообщение, если это InlineCall."""
         is_call = isinstance(message_or_call, InlineCall)
         
+        if is_call:
+            await message_or_call.answer(self.strings("action_in_progress").format(action=self.strings("action_names").get(action, action)))
+
         if action == "status":
             details_response = await self._api_request(f"container/{container_id}")
             if "error" in details_response: return await utils.answer(message_or_call, self.strings("api_error").format(details_response["error"]))
+            
             details = details_response.get("data", {})
             status_emojis = {"running": "🟢", "exited": "🔴", "restarting": "🟡"}
             
@@ -121,7 +156,7 @@ class RewHostBridgeMod(loader.Module):
             container_name = container_response.get("data", {}).get('container_name', 'N/A')
 
             if not logs or not logs.strip():
-                if is_call: await call.answer("📋 Логи пусты.", show_alert=True)
+                if is_call: await message_or_call.answer("📋 Логи пусты.", show_alert=True)
                 else: await utils.answer(message_or_call, "📋 Логи пусты.")
                 return
 
@@ -144,9 +179,8 @@ class RewHostBridgeMod(loader.Module):
             
             if is_call: await message_or_call.edit(text)
             else: await utils.answer(message_or_call, text)
-    
+
     async def _interactive_selector(self, message: Message, action: str):
-        """Показывает инлайн-меню выбора контейнера для действия."""
         await message.delete()
         
         loading_msg = await self.inline.form(text=self.strings("inline_loading"), message=message)
@@ -173,7 +207,7 @@ class RewHostBridgeMod(loader.Module):
         
         await loading_msg.edit(text, reply_markup=utils.chunks(buttons, 2))
 
-    @loader.command()
+    @loader.command(alias="rh")
     async def rhstatus(self, message: Message):
         """[ID] - Показать статус вашего UserBot'а на хостинге"""
         args = utils.get_args(message)
@@ -228,17 +262,11 @@ class RewHostBridgeMod(loader.Module):
         else:
             await self._interactive_selector(message, "logs")
 
+    # <<< ИСПРАВЛЕНИЕ >>>
+    # Сигнатура функции изменена для приема аргументов
     @loader.callback_handler()
-    async def rh_interactive_callback(self, call: InlineCall):
+    async def rh_interactive_callback(self, call: InlineCall, action: str, container_id: int):
         """Обрабатывает нажатия кнопок из интерактивного селектора."""
-        if not call.data: return
-        
-        try:
-            action, container_id_str = call.data
-            container_id = int(container_id_str)
-        except (ValueError, IndexError):
-            return
-        
         await self._perform_action(call, action, container_id)
 
 # --- END OF FILE RewHeroku-master/heroku/modules/rewhost_bridge.py ---
