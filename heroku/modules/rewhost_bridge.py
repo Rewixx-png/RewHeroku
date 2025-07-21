@@ -262,9 +262,7 @@ class RewHostBridgeMod(loader.Module):
         else:
             await self._interactive_selector(message, "logs")
 
-    # <<< ИСПРАВЛЕНИЕ >>>
-    # Сигнатура функции изменена для приема аргументов
-    @loader.callback_handler()
+    # <<< ИСПРАВЛЕНИЕ: Декоратор убран. Теперь это обычный метод. >>>
     async def rh_interactive_callback(self, call: InlineCall, action: str, container_id: int):
         """Обрабатывает нажатия кнопок из интерактивного селектора."""
         await self._perform_action(call, action, container_id)
