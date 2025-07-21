@@ -12,14 +12,14 @@
 
 import git
 import time
-import git
 import psutil
 import os
 import glob
 import requests
 import re
 import emoji
-
+import getpass
+import platform as lib_platform
 from bs4 import BeautifulSoup
 from typing import Optional
 from pathlib import Path
@@ -28,8 +28,7 @@ from io import BytesIO
 from herokutl.tl.types import Message
 from herokutl.utils import get_display_name
 from .. import loader, utils, version
-import platform as lib_platform
-import getpass
+
 
 @loader.tds
 class HerokuInfoMod(loader.Module):
@@ -43,13 +42,11 @@ class HerokuInfoMod(loader.Module):
                 "custom_message",
                 doc=lambda: self.strings("_cfg_cst_msg"),
             ),
-
             loader.ConfigValue(
                 "banner_url",
                 "https://raw.githubusercontent.com/coddrago/assets/refs/heads/main/heroku/heroku_info.png",
                 lambda: self.strings("_cfg_banner"),
             ),
-
             loader.ConfigValue(
                 "show_heroku",
                 True,
@@ -77,6 +74,15 @@ class HerokuInfoMod(loader.Module):
             ),
         )
 
+    def _get_ip(self):
+        """Fetches the public IP address of the server."""
+        try:
+            response = requests.get("https://api.ipify.org?format=json", timeout=5)
+            response.raise_for_status()
+            return response.json().get("ip", "N/A")
+        except Exception:
+            return "N/A"
+
     def _get_os_name(self):
         try:
             with open("/etc/os-release", "r") as f:
@@ -101,6 +107,8 @@ class HerokuInfoMod(loader.Module):
         return metatag['content']
 
     def _render_info(self, start: float) -> str:
+        ip_address = self._get_ip()
+        
         TARIFFS = {
             'free': 300,
             'lite': 300,
@@ -123,6 +131,7 @@ class HerokuInfoMod(loader.Module):
             self._client.heroku_me.id,
             utils.escape_html(get_display_name(self._client.heroku_me)),
         ).replace('{', '').replace('}', '')
+        
         build = utils.get_commit_url()
         _version = f'<i>{".".join(list(map(str, list(version.__version__))))}</i>'
         prefix = f"«<code>{utils.escape_html(self.get_prefix())}</code>»"
@@ -151,6 +160,7 @@ class HerokuInfoMod(loader.Module):
             ("🍏", "<emoji document_id=5372908412604525258>🍏</emoji>")
         ]:
             platform = platform.replace(emoji, icon)
+        
         return (
             (
                 "🪐 Heroku\n"
@@ -170,10 +180,12 @@ class HerokuInfoMod(loader.Module):
                 branch=version.branch,
                 hostname=lib_platform.node(),
                 user=getpass.getuser(),
+                user_id=self._client.heroku_me.id,
                 os=self._get_os_name() or self.strings('non_detectable'),
                 kernel=lib_platform.release(),
                 cpu=f"{psutil.cpu_count(logical=False)} ({psutil.cpu_count()}) core(-s); {psutil.cpu_percent()}% total",
-                ping=round((time.perf_counter_ns() - start) / 10**6, 3)
+                ping=round((time.perf_counter_ns() - start) / 10**6, 3),
+                ip=ip_address
             )
             if self.config["custom_message"]
             else (
@@ -235,7 +247,7 @@ class HerokuInfoMod(loader.Module):
     
     @loader.command()
     async def insfont(self, message: Message):
-        "<Url|Reply to font> - Install font"
+        """<Url|Reply to font> - Install font"""
         if message.is_reply:
             reply = await message.get_reply_message()
             fontform = reply.document.mime_type.split("/")[1]
