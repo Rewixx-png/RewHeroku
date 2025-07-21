@@ -8,7 +8,7 @@
 # █ █ █                 Userbot management module                   █ █ █
 # █ █ █                                                             █ █ █
 # █ █ █                  meta developer: @RewiX_X                   █ █ █
-# █ █ █               https://github.com/Rewixx-png                   █ █ █
+# █ █ █               https://github.com/Rewixx-png                 █ █ █
 # █ █ █                                                             █ █ █
 # █ █ █▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄█ █ █
 # █ █▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄█ █
@@ -18,7 +18,6 @@ import aiohttp
 import asyncio
 import typing
 from .. import loader, utils
-# <<< ИСПРАВЛЕНИЕ: Правильный импорт типа Message и InlineCall >>>
 from herokutl.tl.types import Message
 from ..inline.types import InlineCall, InlineQuery
 
@@ -126,7 +125,6 @@ class RewHostBridgeMod(loader.Module):
             await utils.answer(message, "🚫 Некорректный ID.")
             return None
 
-    # КОМАНДЫ ОСТАЮТСЯ ДЛЯ УДОБСТВА ИСПОЛЬЗОВАНИЯ
     @loader.command(alias="rh")
     async def rhstatus(self, message: Message):
         """[ID] - Показать статус вашего UserBot'а на хостинге"""
@@ -190,7 +188,7 @@ class RewHostBridgeMod(loader.Module):
         else:
             await utils.answer(message, self.strings("action_success").format(action="restart", name=container['container_name']))
 
-    @loader.command()
+    @loader.command(alias="rhlogss") # Добавляем алиас с опечаткой для удобства
     async def rhlogs(self, message: Message):
         """[ID] [кол-во строк] - Показать логи UserBot'а"""
         args = utils.get_args(message)
@@ -203,19 +201,23 @@ class RewHostBridgeMod(loader.Module):
             lines = 100
 
         logs_response = await self._api_request(f"container/{container['id']}/logs", params={"lines": lines})
+        
+        # <<< НАЧАЛО ИСПРАВЛЕНИЯ >>>
         if "error" in logs_response:
             await utils.answer(message, self.strings("api_error").format(logs_response["error"]))
             return
         
-        logs = logs_response
+        # Теперь logs_response - это весь словарь, извлекаем 'data'
+        logs = logs_response.get("data")
+        # Проверяем, что 'logs' теперь строка, а не None
         if not logs or not logs.strip():
+        # <<< КОНЕЦ ИСПРАВЛЕНИЯ >>>
             await utils.answer(message, "📋 Логи пусты.")
             return
 
         caption = self.strings("logs_caption").format(lines=lines, name=container['container_name'])
         await utils.answer_file(message, logs, caption, filename=f"{container['container_name']}.log")
     
-    # <<< НОВЫЙ ИНЛАЙН-ОБРАБОТЧИК >>>
     @loader.inline_handler("rh")
     async def rh_inline_handler(self, query: InlineQuery):
         """Инлайн-панель управления юзерботами."""
@@ -231,7 +233,7 @@ class RewHostBridgeMod(loader.Module):
         response = await self._api_request("containers")
         if "error" in response:
             return await query.answer([{"title": "API Error", "description": response["error"], "message": self.strings("api_error").format(response["error"])}])
-        
+            
         containers = response.get("data", [])
         if not containers:
             return await query.answer([{"title": "No UserBots", "description": "You have no active UserBots on the hosting.", "message": self.strings("no_containers")}])
@@ -248,12 +250,12 @@ class RewHostBridgeMod(loader.Module):
             
             buttons = []
             if status == 'running':
-                buttons.append({"text": self.strings("inline_stop"), "callback": self.rh_callback_action, "args": ("stop", c['id'])})
-                buttons.append({"text": self.strings("inline_restart"), "callback": self.rh_callback_action, "args": ("restart", c['id'])})
+                buttons.append({"text": self.strings("inline_stop"), "callback": self.rh_callback_action, "args": (f"stop_{c['id']}",)})
+                buttons.append({"text": self.strings("inline_restart"), "callback": self.rh_callback_action, "args": (f"restart_{c['id']}",)})
             else:
-                buttons.append({"text": self.strings("inline_start"), "callback": self.rh_callback_action, "args": ("start", c['id'])})
+                buttons.append({"text": self.strings("inline_start"), "callback": self.rh_callback_action, "args": (f"start_{c['id']}",)})
             
-            buttons.append({"text": self.strings("inline_logs"), "callback": self.rh_callback_action, "args": ("logs", c['id'])})
+            buttons.append({"text": self.strings("inline_logs"), "callback": self.rh_callback_action, "args": (f"logs_{c['id']}",)})
             
             results.append({
                 "title": c['container_name'],
@@ -274,17 +276,15 @@ class RewHostBridgeMod(loader.Module):
             
         await query.answer(results, cache_time=10)
 
-    # <<< НОВЫЙ КОЛЛБЭК-ОБРАБОТЧИК >>>
     @loader.callback_handler()
     async def rh_callback_action(self, call: InlineCall):
-        """Обрабатывает нажатия кнопок из инлайн-меню."""
         if not call.data: return
         
         try:
             action, container_id_str = call.data.split("_")
             container_id = int(container_id_str)
         except (ValueError, IndexError):
-            return # Не наш коллбэк
+            return
 
         await call.answer(self.strings("action_in_progress").format(action=action))
         
@@ -292,16 +292,16 @@ class RewHostBridgeMod(loader.Module):
             logs_response = await self._api_request(f"container/{container_id}/logs", params={"lines": 200})
             if "error" in logs_response: return
             
+            logs = logs_response.get("data")
             container_response = await self._api_request(f"container/{container_id}")
             container_name = container_response.get("data", {}).get('container_name', 'N/A')
             
             caption = self.strings("logs_caption").format(lines=200, name=container_name)
-            await self.client.send_file("me", logs_response.encode('utf-8'), caption=caption)
+            await self.client.send_file("me", logs.encode('utf-8'), caption=caption)
             await self.inline.bot.send_message(call.from_user.id, self.strings("inline_logs_sent").format(name=container_name))
         else:
             await self._api_request(f"container/{container_id}/action", method="POST", data={"action": action})
         
-        # Обновляем инлайн-сообщение через 2 секунды
         await asyncio.sleep(2)
         
         details_response = await self._api_request(f"container/{container_id}")
@@ -313,12 +313,12 @@ class RewHostBridgeMod(loader.Module):
         
         buttons = []
         if status == 'running':
-            buttons.append({"text": self.strings("inline_stop"), "callback": self.rh_callback_action, "args": ("stop", container_id)})
-            buttons.append({"text": self.strings("inline_restart"), "callback": self.rh_callback_action, "args": ("restart", container_id)})
+            buttons.append({"text": self.strings("inline_stop"), "callback": self.rh_callback_action, "args": (f"stop_{container_id}",)})
+            buttons.append({"text": self.strings("inline_restart"), "callback": self.rh_callback_action, "args": (f"restart_{container_id}",)})
         else:
-            buttons.append({"text": self.strings("inline_start"), "callback": self.rh_callback_action, "args": ("start", container_id)})
+            buttons.append({"text": self.strings("inline_start"), "callback": self.rh_callback_action, "args": (f"start_{container_id}",)})
         
-        buttons.append({"text": self.strings("inline_logs"), "callback": self.rh_callback_action, "args": ("logs", container_id)})
+        buttons.append({"text": self.strings("inline_logs"), "callback": self.rh_callback_action, "args": (f"logs_{container_id}",)})
         
         try:
             await call.edit(
@@ -336,5 +336,5 @@ class RewHostBridgeMod(loader.Module):
                 reply_markup=buttons
             )
         except Exception:
-            pass # Игнорируем, если сообщение не изменилось или удалено
+            pass
 # --- END OF FILE RewHeroku-master/heroku/modules/rewhost_bridge.py ---
