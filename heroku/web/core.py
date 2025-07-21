@@ -36,6 +36,9 @@ import time
 import aiohttp_jinja2
 import jinja2
 from aiohttp import web
+# <<< ИСПРАВЛЕНИЕ: ДОБАВЛЕН ЭТОТ ИМПОРТ >>>
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+# <<< КОНЕЦ ИСПРАВЛЕНИЯ >>>
 from herokutl.errors import (
     FloodWaitError,
     PasswordHashInvalidError,
@@ -583,8 +586,7 @@ class Web(root.Web):
                     )
                 ).json()
                 cities += [
-                    f"<i>{utils.get_lang_flag(res['country_code'])} {res['country_name']}"
-                    f" {res['region_name']} {res['city']} {res['zip_code']}</i>"
+                    f"<i>{utils.get_lang_flag(res['country_code'])} {res['country_name']} {res['region_name']} {res['city']} {res['zip_code']}</i>"
                 ]
             except Exception:
                 pass
