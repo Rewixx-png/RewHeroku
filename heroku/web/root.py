@@ -270,9 +270,9 @@ class Web:
             if self._2fa_needed:
                 return web.Response(status=403, body="2FA")
             
-            # This path is hit when QR is scanned but no 2FA is needed
             if self._pending_client:
-                await main.heroku.save_client_session(self._pending_client)
+                await main.heroku.save_client_session(self._pending_client, delay_restart=True)
+                self._pending_client.is_web = True
             
             return web.Response(status=200, body="SUCCESS")
 
@@ -358,7 +358,6 @@ class Web:
             return web.Response(status=401)
 
         text = await request.text()
-
         logger.debug("2FA code received for QR login: %s", text)
 
         try:
@@ -376,20 +375,14 @@ class Web:
             )
         except PasswordHashInvalidError:
             logger.debug("Invalid 2FA code")
-            return web.Response(
-                status=403,
-                body="Invalid 2FA password",
-            )
+            return web.Response(status=403, body="Invalid 2FA password")
         except FloodWaitError as e:
             logger.debug("FloodWait for 2FA code")
-            return web.Response(
-                status=421,
-                body=(self._render_fw_error(e)),
-            )
+            return web.Response(status=421, body=self._render_fw_error(e))
 
         logger.debug("2FA code accepted, logging in")
-        
-        await main.heroku.save_client_session(self._pending_client)
+        await main.heroku.save_client_session(self._pending_client, delay_restart=True)
+        self._pending_client.is_web = True
         return web.Response(status=200, body="SUCCESS")
 
     async def tg_code(self, request: web.Request) -> web.Response:
@@ -397,12 +390,10 @@ class Web:
             return web.Response(status=401)
 
         text = await request.text()
-
         if len(text) < 6:
             return web.Response(status=400)
 
         split = text.split("\n", 2)
-
         if len(split) < 2:
             return web.Response(status=400)
 
@@ -413,52 +404,44 @@ class Web:
         if not code or any(c not in string.digits for c in code) or not phone:
             return web.Response(status=400)
 
-        if not password:
-            try:
+        try:
+            if not password:
                 await self._pending_client.sign_in(phone, code=code)
-            except SessionPasswordNeededError:
-                return web.Response(
-                    status=401,
-                    body="2FA Password required",
-                )
-            except PhoneCodeExpiredError:
-                return web.Response(status=404, body="Code expired")
-            except PhoneCodeInvalidError:
-                return web.Response(status=403, body="Invalid code")
-            except FloodWaitError as e:
-                return web.Response(
-                    status=421,
-                    body=(self._render_fw_error(e)),
-                )
-        else:
-            try:
+            else:
                 await self._pending_client.sign_in(phone, password=password)
-            except PasswordHashInvalidError:
-                return web.Response(
-                    status=403,
-                    body="Invalid 2FA password",
-                )
-            except FloodWaitError as e:
-                return web.Response(
-                    status=421,
-                    body=(self._render_fw_error(e)),
-                )
+        except SessionPasswordNeededError:
+            return web.Response(status=401, body="2FA Password required")
+        except (PhoneCodeExpiredError, PhoneCodeInvalidError):
+            return web.Response(status=403, body="Invalid code")
+        except PasswordHashInvalidError:
+            return web.Response(status=403, body="Invalid 2FA password")
+        except FloodWaitError as e:
+            return web.Response(status=421, body=self._render_fw_error(e))
 
-        await main.heroku.save_client_session(self._pending_client)
+        await main.heroku.save_client_session(self._pending_client, delay_restart=True)
+        self._pending_client.is_web = True
         return web.Response(status=200, body="SUCCESS")
 
     async def finish_login(self, request: web.Request) -> web.Response:
-        # This endpoint is now primarily for confirming to the browser
-        # but the actual logic is handled in tg_code and qr_2fa
         if not self._check_session(request):
             return web.Response(status=401)
+        
+        if not self._pending_client or not getattr(self._pending_client, "is_web", False):
+            # If client is not pending from a web login, do nothing.
+            # This prevents accidental restarts if this endpoint is called unexpectedly.
+            return web.Response(status=200)
 
-        # This client should have been processed already.
-        # Clear it just in case, but don't use it.
-        if self._pending_client:
-            self._pending_client = None
-
+        first_session = not bool(main.heroku.clients)
+        
+        main.heroku.clients.append(self._pending_client)
+        self._pending_client = None
         self.clients_set.set()
+        
+        if not first_session:
+            # Only restart if this is not the very first account being set up
+            # to avoid interrupting the initial setup flow.
+            await asyncio.sleep(1) # Give a moment for the response to be sent
+            restart()
 
         return web.Response()
 
@@ -548,9 +531,6 @@ class Web:
         session = f"heroku_{utils.rand(16)}"
 
         if not ops:
-            # If no auth message was sent, just leave it empty
-            # probably, request was a bug and user doesn't have
-            # inline bot or did not authorize any sessions
             return web.Response(body=session)
 
         if not await main.heroku.wait_for_web_auth(token):
