@@ -32,7 +32,6 @@ import collections
 import string
 import re
 import time
-import random
 import typing
 
 import aiohttp_jinja2
@@ -89,9 +88,7 @@ class Web(root.Web):
             loader=jinja2.FileSystemLoader("web-resources"),
         )
         self.app["static_root_url"] = "/static"
-        
-        self._pin_sessions = {}
-        
+
         super().__init__(**kwargs)
         self.app.router.add_get("/favicon.ico", self.favicon)
         self.app.router.add_static("/static/", "web-resources/static")
@@ -513,6 +510,7 @@ class Web(root.Web):
 
         await self._save_new_session(self._pending_client)
         return web.Response(status=200, body="SUCCESS")
+
 
     async def finish_login(self, request: web.Request) -> web.Response:
         if not self._check_session(request):
