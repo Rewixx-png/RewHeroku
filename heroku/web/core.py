@@ -32,13 +32,13 @@ import collections
 import string
 import re
 import time
+import random
+import typing
 
 import aiohttp_jinja2
 import jinja2
 from aiohttp import web
-# <<< ИСПРАВЛЕНИЕ: ДОБАВЛЕН ЭТОТ ИМПОРТ >>>
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-# <<< КОНЕЦ ИСПРАВЛЕНИЯ >>>
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from herokutl.errors import (
     FloodWaitError,
     PasswordHashInvalidError,
@@ -55,7 +55,11 @@ from herokutl.tl.functions.contacts import UnblockRequest
 from herokutl.utils import parse_phone
 
 from ..database import Database
-from ..loader import Modules
+# <<< НАЧАЛО ИСПРАВЛЕНИЯ: Убираем прямой импорт, чтобы разорвать цикл >>>
+# from ..loader import Modules
+if typing.TYPE_CHECKING:
+    from ..loader import Modules
+# <<< КОНЕЦ ИСПРАВЛЕНИЯ >>>
 from ..tl_cache import CustomTelegramClient
 from . import proxypass, root
 from .. import main, utils, version
@@ -86,7 +90,9 @@ class Web(root.Web):
             loader=jinja2.FileSystemLoader("web-resources"),
         )
         self.app["static_root_url"] = "/static"
-
+        
+        self._pin_sessions = {}
+        
         super().__init__(**kwargs)
         self.app.router.add_get("/favicon.ico", self.favicon)
         self.app.router.add_static("/static/", "web-resources/static")
@@ -153,7 +159,7 @@ class Web(root.Web):
     async def add_loader(
         self,
         client: CustomTelegramClient,
-        loader: Modules,
+        loader: "Modules", # Используем строковый тип
         db: Database,
     ):
         self.client_data[client.tg_id] = (loader, client, db)
@@ -335,7 +341,6 @@ class Web(root.Web):
             if self._2fa_needed:
                 return web.Response(status=403, body="2FA")
             
-            # <<< ИЗМЕНЕНИЕ: Не вызываем save_client_session напрямую >>>
             return web.Response(status=200, body="SUCCESS_NO_2FA")
 
         if self._qr_login is None:
@@ -416,7 +421,6 @@ class Web(root.Web):
             " amount of time and try again."
         )
 
-    # <<< НАЧАЛО ИЗМЕНЕНИЙ: Новая изолированная функция сохранения >>>
     async def _save_new_session(self, client: CustomTelegramClient):
         """Saves a new session without interfering with the main client"""
         try:
@@ -510,7 +514,6 @@ class Web(root.Web):
 
         await self._save_new_session(self._pending_client)
         return web.Response(status=200, body="SUCCESS")
-    # <<< КОНЕЦ ИЗМЕНЕНИЙ >>>
 
 
     async def finish_login(self, request: web.Request) -> web.Response:
@@ -518,9 +521,7 @@ class Web(root.Web):
             return web.Response(status=401)
 
         if not self._pending_client:
-            # This can happen if the user reloads the page after a successful login
-            # before the restart completes. It's safe to just restart.
-            if not main.heroku.clients: # Only restart if it's the very first login
+            if not main.heroku.clients:
                 logging.info("Restarting after page reload...")
                 restart()
             return web.Response(body="OK, already processing")
@@ -538,103 +539,67 @@ class Web(root.Web):
             restart()
 
         return web.Response()
+    
+    async def request_pin(self, request: web.Request) -> web.Response:
+        session_id = utils.rand(16)
+        pin = "".join(random.choice(string.digits) for _ in range(6))
+        
+        self._pin_sessions[session_id] = {
+            "pin": pin,
+            "timestamp": time.time(),
+        }
 
+        for sid, data in list(self._pin_sessions.items()):
+            if time.time() - data["timestamp"] > 300:
+                del self._pin_sessions[sid]
+
+        try:
+            first_client_data = next(iter(self.client_data.values()), None)
+            if not first_client_data:
+                return web.Response(status=503, body="No active clients to send PIN.")
+            
+            _loader, _client, _db = first_client_data
+            
+            await _loader.inline.bot.send_message(
+                _client.tg_id,
+                f"🔐 <b>Heroku Web Authentication</b>\n\n"
+                f"Your one-time code for adding a new account is: <code>{pin}</code>\n\n"
+                f"<i>This code will expire in 5 minutes.</i>"
+            )
+        except Exception:
+            logger.exception("Failed to send PIN via Telegram")
+            return web.Response(status=500, body="Failed to send PIN via Telegram.")
+
+        return web.json_response({"session_id": session_id})
+
+    async def verify_pin(self, request: web.Request) -> web.Response:
+        try:
+            data = await request.json()
+            session_id = data.get("session_id")
+            pin = data.get("pin")
+        except Exception:
+            return web.json_response({"status": "error", "message": "Invalid request"}, status=400)
+
+        stored_session = self._pin_sessions.get(session_id)
+
+        if not stored_session or time.time() - stored_session["timestamp"] > 300:
+            return web.json_response({"status": "error", "message": "PIN expired or invalid session. Please try again."}, status=403)
+            
+        if stored_session["pin"] != pin:
+            return web.json_response({"status": "error", "message": "Invalid PIN code."}, status=403)
+
+        del self._pin_sessions[session_id]
+        
+        session_cookie = f"heroku_{utils.rand(16)}"
+        self._sessions.append(session_cookie)
+        
+        response = web.json_response({"status": "ok"})
+        response.set_cookie("session", session_cookie, max_age=3600)
+        
+        return response
+    
     async def web_auth(self, request: web.Request) -> web.Response:
         if self._check_session(request):
-            return web.Response(body=request.cookies.get("session", "unauthorized"))
+            return web.Response(body=request.cookies.get("session", "authorized"))
 
-        token = utils.rand(8)
-
-        markup = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="🔓 Authorize user",
-                        callback_data=f"authorize_web_{token}",
-                    )
-                ]
-            ]
-        )
-
-        ips = request.headers.get("X-FORWARDED-FOR", None) or request.remote
-        cities = []
-
-        for ip in re.findall(r"[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}", ips):
-            if ip not in self._ratelimit:
-                self._ratelimit[ip] = []
-
-            if (
-                len(
-                    list(
-                        filter(lambda x: time.time() - x < 3 * 60, self._ratelimit[ip])
-                    )
-                )
-                >= 3
-            ):
-                return web.Response(status=429)
-
-            self._ratelimit[ip] = list(
-                filter(lambda x: time.time() - x < 3 * 60, self._ratelimit[ip])
-            )
-
-            self._ratelimit[ip] += [time.time()]
-            try:
-                res = (
-                    await utils.run_sync(
-                        requests.get,
-                        f"https://freegeoip.app/json/{ip}",
-                    )
-                ).json()
-                cities += [
-                    f"<i>{utils.get_lang_flag(res['country_code'])} {res['country_name']} {res['region_name']} {res['city']} {res['zip_code']}</i>"
-                ]
-            except Exception:
-                pass
-
-        cities = (
-            ("<b>🏢 Possible cities:</b>\n\n" + "\n".join(cities) + "\n")
-            if cities
-            else ""
-        )
-
-        ops = []
-
-        for user in self.client_data.values():
-            try:
-                bot = user[0].inline.bot
-                msg = await bot.send_message(
-                    chat_id=user[1].tg_id,
-                    text=(
-                        "🪐🔐 <b>Click button below to confirm web application"
-                        f" ops</b>\n\n<b>Client IP</b>: {ips}\n{cities}\n<i>If you did"
-                        " not request any codes, simply ignore this message</i>"
-                    ),
-                    disable_web_page_preview=True,
-                    reply_markup=markup,
-                )
-                ops += [
-                    functools.partial(
-                        bot.delete_message,
-                        chat_id=msg.chat.id,
-                        message_id=msg.message_id,
-                    )
-                ]
-            except Exception:
-                pass
-
-        session = f"heroku_{utils.rand(16)}"
-
-        if not ops:
-            return web.Response(body=session)
-
-        if not await main.heroku.wait_for_web_auth(token):
-            for op in ops:
-                await op()
-            return web.Response(body="TIMEOUT")
-
-        for op in ops:
-            await op()
-
-        self._sessions += [session]
-
-        return web.Response(body=session)
+        return web.Response(status=401, body="Authentication flow changed. Please use PIN authentication.")
