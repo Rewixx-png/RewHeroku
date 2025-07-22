@@ -17,15 +17,25 @@ const codeInput = document.getElementById('code');
 const passwordInput = document.getElementById('password');
 
 const installationIcon = document.getElementById('installation_icon');
+const authOverlay = document.querySelector('.auth.vert_center');
 
 // Initialize Lottie animation
-if(installationIcon) {
+if (installationIcon) {
     lottie.loadAnimation({
         container: installationIcon,
         renderer: 'svg',
         loop: true,
         autoplay: true,
         path: '/static/success.json'
+    });
+}
+if (authOverlay) {
+     lottie.loadAnimation({
+        container: document.getElementById('tg_icon'),
+        renderer: 'svg',
+        loop: true,
+        autoplay: true,
+        path: '/static/telegram.json'
     });
 }
 
@@ -46,7 +56,10 @@ function showStep(stepNumber) {
     document.querySelectorAll('.wizard-step').forEach(step => {
         step.classList.remove('active');
     });
-    document.getElementById(`step-${stepNumber}`).classList.add('active');
+    const nextStep = document.getElementById(`step-${stepNumber}`);
+    if(nextStep) {
+        nextStep.classList.add('active');
+    }
     currentStep = stepNumber;
     updateProgressBar();
     updateNavigation();
@@ -69,14 +82,28 @@ function updateNavigation() {
 }
 
 // Event Listeners
-startBtn.addEventListener('click', () => showStep(2));
+startBtn.addEventListener('click', () => {
+    if (tg_done) {
+        // If we are adding a second account, re-authenticate first
+        reauthenticateAndStart();
+    } else {
+        // First time setup, just go to next step
+        showStep(2);
+    }
+});
+
 backBtn.addEventListener('click', () => {
     if (authMethod === 'qr' && currentStep === 3) {
-        if(qrTask) clearInterval(qrTask);
-        showStep(2);
-    } else if(currentStep > 1) {
-       showStep(currentStep - 1);
+        if (qrTask) clearInterval(qrTask);
     }
+     // Reset phone hash when going back from code/2fa input
+    if (authMethod === 'phone' && currentStep === 3) {
+        phone_hash = undefined;
+        document.getElementById('block_phone').style.display = 'block';
+        document.getElementById('block_code').style.display = 'none';
+        document.getElementById('block_2fa').style.display = 'none';
+    }
+    showStep(currentStep - 1);
 });
 
 authPhoneBtn.addEventListener('click', () => {
@@ -100,6 +127,26 @@ nextBtn.addEventListener('click', () => {
     }
 });
 
+function reauthenticateAndStart() {
+    authOverlay.style.display = 'flex';
+    fetch("/web_auth", { method: "POST" })
+        .then(response => response.text())
+        .then(response => {
+            authOverlay.style.display = 'none';
+            if (response === "TIMEOUT") {
+                Swal.fire('Тайм-аут', 'Вы не подтвердили вход в Telegram.', 'error');
+            } else {
+                $.cookie("session", response, { expires: 1, path: '/' });
+                showStep(2);
+            }
+        })
+        .catch(error => {
+            authOverlay.style.display = 'none';
+            Swal.fire('Ошибка', `Не удалось выполнить аутентификацию: ${error}`, 'error');
+        });
+}
+
+
 function handlePhoneSubmission() {
     if (phone_hash) { // We are submitting code or 2FA
         if (document.getElementById('block_2fa').style.display !== 'none') {
@@ -119,7 +166,7 @@ function submitPhone() {
         return;
     }
     
-    nextBtn.innerText = 'Загрузка...';
+    nextBtn.innerHTML = '<div class="vert_center">Загрузка...</div>';
     nextBtn.disabled = true;
 
     fetch("/send_tg_code", { method: "POST", body: phone, credentials: "include" })
@@ -137,7 +184,7 @@ function submitPhone() {
             Swal.fire('Ошибка', `Не удалось отправить код: ${error}`, 'error');
         })
         .finally(() => {
-            nextBtn.innerText = 'Далее';
+            nextBtn.innerHTML = '<div class="vert_center">Далее</div>';
             nextBtn.disabled = false;
         });
 }
@@ -149,7 +196,7 @@ function submitCode() {
         return;
     }
     
-    nextBtn.innerText = 'Проверка...';
+    nextBtn.innerHTML = '<div class="vert_center">Проверка...</div>';
     nextBtn.disabled = true;
 
     fetch("/tg_code", { method: "POST", body: code + "\n" + phoneInput.value, credentials: "include" })
@@ -168,7 +215,7 @@ function submitCode() {
             Swal.fire('Ошибка', `Неверный код: ${error}`, 'error');
         })
         .finally(() => {
-            nextBtn.innerText = 'Далее';
+            nextBtn.innerHTML = '<div class="vert_center">Далее</div>';
             nextBtn.disabled = false;
         });
 }
@@ -180,7 +227,7 @@ function submit2FA() {
         return;
     }
 
-    nextBtn.innerText = 'Вход...';
+    nextBtn.innerHTML = '<div class="vert_center">Вход...</div>';
     nextBtn.disabled = true;
 
     fetch("/tg_code", { method: "POST", body: codeInput.value + "\n" + phoneInput.value + "\n" + password, credentials: "include" })
@@ -195,7 +242,7 @@ function submit2FA() {
             Swal.fire('Ошибка', `Неверный пароль: ${error}`, 'error');
         })
         .finally(() => {
-            nextBtn.innerText = 'Далее';
+            nextBtn.innerHTML = '<div class="vert_center">Далее</div>';
             nextBtn.disabled = false;
         });
 }
