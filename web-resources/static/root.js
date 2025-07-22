@@ -19,7 +19,7 @@ const passwordInput = document.getElementById('password');
 const installationIcon = document.getElementById('installation_icon');
 const authOverlay = document.querySelector('.auth.vert_center');
 
-// Initialize Lottie animation
+// Lottie Animations
 if (installationIcon) {
     lottie.loadAnimation({
         container: installationIcon,
@@ -30,7 +30,7 @@ if (installationIcon) {
     });
 }
 if (authOverlay) {
-     lottie.loadAnimation({
+    lottie.loadAnimation({
         container: document.getElementById('tg_icon'),
         renderer: 'svg',
         loop: true,
@@ -39,103 +39,44 @@ if (authOverlay) {
     });
 }
 
-
+// Functions
 function updateProgressBar() {
     const steps = document.querySelectorAll('.progress-step');
     steps.forEach(step => {
         const stepNum = parseInt(step.getAttribute('data-step'));
-        if (stepNum <= currentStep) {
-            step.classList.add('active');
-        } else {
-            step.classList.remove('active');
-        }
+        step.classList.toggle('active', stepNum <= currentStep);
     });
 }
 
 function showStep(stepNumber) {
-    document.querySelectorAll('.wizard-step').forEach(step => {
-        step.classList.remove('active');
-    });
+    document.querySelectorAll('.wizard-step').forEach(step => step.classList.remove('active'));
     const nextStep = document.getElementById(`step-${stepNumber}`);
-    if(nextStep) {
-        nextStep.classList.add('active');
-    }
+    if (nextStep) nextStep.classList.add('active');
     currentStep = stepNumber;
     updateProgressBar();
     updateNavigation();
 }
 
 function updateNavigation() {
-    if (currentStep === 1) {
-        backBtn.style.display = 'none';
-        nextBtn.style.display = 'none';
-    } else if (currentStep === 2) {
-        backBtn.style.display = 'inline-flex';
-        nextBtn.style.display = 'none';
-    } else if (currentStep === 3) {
-        backBtn.style.display = 'inline-flex';
-        nextBtn.style.display = 'inline-flex';
-    } else {
-        backBtn.style.display = 'none';
-        nextBtn.style.display = 'none';
+    backBtn.style.display = currentStep > 1 && currentStep < totalSteps ? 'inline-flex' : 'none';
+    nextBtn.style.display = currentStep === 3 ? 'inline-flex' : 'none';
+    
+    if (currentStep === 2) {
+         backBtn.style.display = 'inline-flex';
     }
 }
 
-// Event Listeners
-startBtn.addEventListener('click', () => {
-    if (tg_done) {
-        // If we are adding a second account, re-authenticate first
-        reauthenticateAndStart();
-    } else {
-        // First time setup, just go to next step
-        showStep(2);
-    }
-});
-
-backBtn.addEventListener('click', () => {
-    if (authMethod === 'qr' && currentStep === 3) {
-        if (qrTask) clearInterval(qrTask);
-    }
-     // Reset phone hash when going back from code/2fa input
-    if (authMethod === 'phone' && currentStep === 3) {
-        phone_hash = undefined;
-        document.getElementById('block_phone').style.display = 'block';
-        document.getElementById('block_code').style.display = 'none';
-        document.getElementById('block_2fa').style.display = 'none';
-    }
-    showStep(currentStep - 1);
-});
-
-authPhoneBtn.addEventListener('click', () => {
-    authMethod = 'phone';
-    document.getElementById('phone-auth-content').style.display = 'block';
-    document.getElementById('qr-auth-content').style.display = 'none';
-    showStep(3);
-});
-
-authQrBtn.addEventListener('click', () => {
-    authMethod = 'qr';
-    document.getElementById('phone-auth-content').style.display = 'none';
-    document.getElementById('qr-auth-content').style.display = 'block';
-    initQrLogin();
-    showStep(3);
-});
-
-nextBtn.addEventListener('click', () => {
-    if (currentStep === 3 && authMethod === 'phone') {
-        handlePhoneSubmission();
-    }
-});
-
 function reauthenticateAndStart() {
+    console.log("Starting re-authentication...");
     authOverlay.style.display = 'flex';
-    fetch("/web_auth", { method: "POST" })
+    fetch("/web_auth", { method: "POST", credentials: "include" })
         .then(response => response.text())
         .then(response => {
             authOverlay.style.display = 'none';
             if (response === "TIMEOUT") {
                 Swal.fire('Тайм-аут', 'Вы не подтвердили вход в Telegram.', 'error');
             } else {
+                console.log("Re-authentication successful, moving to step 2.");
                 $.cookie("session", response, { expires: 1, path: '/' });
                 showStep(2);
             }
@@ -148,13 +89,13 @@ function reauthenticateAndStart() {
 
 
 function handlePhoneSubmission() {
-    if (phone_hash) { // We are submitting code or 2FA
+    if (phone_hash) {
         if (document.getElementById('block_2fa').style.display !== 'none') {
             submit2FA();
         } else {
             submitCode();
         }
-    } else { // We are submitting phone number
+    } else {
         submitPhone();
     }
 }
@@ -175,7 +116,7 @@ function submitPhone() {
                 document.getElementById('block_phone').style.display = 'none';
                 document.getElementById('block_code').style.display = 'block';
                 Swal.fire('Успех', 'Код отправлен в Telegram!', 'success');
-                phone_hash = "set"; // Mark that we've sent the phone
+                phone_hash = "set";
             } else {
                 return response.text().then(text => Promise.reject(text));
             }
@@ -201,9 +142,9 @@ function submitCode() {
 
     fetch("/tg_code", { method: "POST", body: code + "\n" + phoneInput.value, credentials: "include" })
         .then(response => {
-            if (response.status === 200) { // Success
+            if (response.status === 200) {
                  finishLogin();
-            } else if (response.status === 401) { // 2FA needed
+            } else if (response.status === 401) {
                 document.getElementById('block_code').style.display = 'none';
                 document.getElementById('block_2fa').style.display = 'block';
                 Swal.fire('Внимание', 'Требуется пароль двухфакторной аутентификации.', 'info');
@@ -248,12 +189,10 @@ function submit2FA() {
 }
 
 function finishLogin() {
+    showStep(4);
     fetch("/finish_login", { method: "POST", credentials: "include" })
-        .then(() => {
-            showStep(4);
-        })
         .catch(error => {
-            Swal.fire('Критическая ошибка', `Не удалось завершить вход: ${error}`, 'error');
+            console.error('Finish login call failed, but proceeding with UI. Error:', error);
         });
 }
 
@@ -286,13 +225,13 @@ function initQrLogin() {
 function pollQrStatus() {
     fetch("/get_qr_url", { method: "POST", credentials: "include" })
         .then(response => {
-            if (response.status === 200) { // Success
+            if (response.status === 200) {
                 clearInterval(qrTask);
                 finishLogin();
-            } else if (response.status === 403) { // 2FA
+            } else if (response.status === 403) {
                 clearInterval(qrTask);
                 promptQr2FA();
-            } else if (response.status === 201) { // Still waiting, new URL
+            } else if (response.status === 201) {
                 return response.text().then(url => qrCode.update({ data: url }));
             }
         })
@@ -329,8 +268,17 @@ async function promptQr2FA() {
     }
 }
 
-// Initial state
+// Initial state and event listeners
 document.addEventListener('DOMContentLoaded', () => {
+    startBtn.addEventListener('click', () => {
+        console.log("Start button clicked. tg_done:", tg_done);
+        if (tg_done) {
+            reauthenticateAndStart();
+        } else {
+            showStep(2);
+        }
+    });
+
     showStep(1);
     if (tg_done) {
         document.querySelector("#start-btn .vert_center").innerText = 'Добавить аккаунт';
