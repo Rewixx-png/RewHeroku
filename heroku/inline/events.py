@@ -220,8 +220,8 @@ class Events(InlineUnit):
         """Callback query handler (buttons' presses)"""
         if reply_markup is None:
             reply_markup = []
-        
-        # <<< НАЧАЛО ИСПРАВЛЕНИЯ >>>
+
+        # <<< ИСПРАВЛЕНИЕ ЗДЕСЬ >>>
         if match := re.search(r"authorize_web_(.{8})", call.data):
             self._web_auth_tokens.append(match.group(1))
             await call.answer("✅ Authenticated! You can return to your browser.", show_alert=True)
