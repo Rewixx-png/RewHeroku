@@ -28,14 +28,14 @@ import inspect
 import logging
 import os
 import subprocess
-import typing # <-- Добавлен этот импорт
+import typing
 
 import aiohttp_jinja2
 import jinja2
 from aiohttp import web
 
 from ..database import Database
-# from ..loader import Modules # <-- Эта строка удалена
+from ..loader import Modules
 from ..tl_cache import CustomTelegramClient
 from . import proxypass, root
 
@@ -124,7 +124,7 @@ class Web(root.Web):
     async def add_loader(
         self,
         client: CustomTelegramClient,
-        loader: "Modules", # <-- Тип указан как строка
+        loader: Modules,
         db: Database,
     ):
         self.client_data[client.tg_id] = (loader, client, db)

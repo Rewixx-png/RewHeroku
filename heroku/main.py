@@ -446,45 +446,65 @@ class Heroku:
                 )
             )
             for session in filter(
-                lambda f: (f.startswith("heroku-") or f.startswith("hikka-")) and f.endswith(".session"),
+                lambda f: f.startswith("heroku-") and f.endswith(".session"),
                 os.listdir(BASE_DIR),
             )
         ]
 
     def _get_api_token(self):
-        """Get API Token from disk or environment"""
+        """Get API Token from disk, environment, or use defaults"""
         api_token_type = collections.namedtuple("api_token", ("ID", "HASH"))
 
-        try:
-            if not get_config_key("api_id"):
-                api_id, api_hash = (
-                    line.strip()
-                    for line in (Path(BASE_DIR) / "api_token.txt")
-                    .read_text()
-                    .splitlines()
-                )
-                save_config_key("api_id", int(api_id))
-                save_config_key("api_hash", api_hash)
-                (Path(BASE_DIR) / "api_token.txt").unlink()
-                logging.debug("Migrated api_token.txt to config.json")
+        # Default values
+        DEFAULT_API_ID = 20045757
+        DEFAULT_API_HASH = "7d3ea0c0d4725498789bd51a9ee02421"
 
-            api_token = api_token_type(
-                get_config_key("api_id"),
-                get_config_key("api_hash"),
-            )
-        except FileNotFoundError:
-            try:
-                from . import api_token
-            except ImportError:
+        api_id = None
+        api_hash = None
+
+        # 1. Try to get from config.json
+        if get_config_key("api_id") and get_config_key("api_hash"):
+            api_id = get_config_key("api_id")
+            api_hash = get_config_key("api_hash")
+            logging.debug("Loaded API credentials from config.json")
+
+        # 2. Try to migrate from api_token.txt if not found in config
+        if not api_id:
+            api_token_path = Path(BASE_DIR) / "api_token.txt"
+            if api_token_path.exists():
                 try:
-                    api_token = api_token_type(
-                        os.environ["api_id"],
-                        os.environ["api_hash"],
+                    api_id_str, api_hash_from_file = (
+                        line.strip()
+                        for line in api_token_path.read_text().splitlines()
                     )
-                except KeyError:
-                    api_token = None
+                    api_id = int(api_id_str)
+                    api_hash = api_hash_from_file
+                    save_config_key("api_id", api_id)
+                    save_config_key("api_hash", api_hash)
+                    api_token_path.unlink()
+                    logging.debug("Migrated api_token.txt to config.json")
+                except Exception:
+                    logging.error("Failed to migrate api_token.txt", exc_info=True)
+                    api_id = None
+                    api_hash = None
 
-        self.api_token = api_token
+        # 3. Try to get from environment variables
+        if not api_id:
+            if "api_id" in os.environ and "api_hash" in os.environ:
+                api_id = int(os.environ["api_id"])
+                api_hash = os.environ["api_hash"]
+                logging.debug("Loaded API credentials from environment variables")
+
+        # 4. Fallback to hardcoded defaults
+        if not api_id:
+            logging.debug("Using default API credentials.")
+            api_id = DEFAULT_API_ID
+            api_hash = DEFAULT_API_HASH
+            # Save defaults to config so it's consistent
+            save_config_key("api_id", api_id)
+            save_config_key("api_hash", api_hash)
+
+        self.api_token = api_token_type(api_id, api_hash)
 
     def _init_web(self):
         """Initialize web"""
@@ -584,7 +604,7 @@ class Heroku:
                     return True
 
         return False
-
+        
     async def _handle_new_session(self, client: CustomTelegramClient) -> bool:
         """
         Handles the logic for a newly created session.
@@ -623,8 +643,9 @@ class Heroku:
         )
 
         await client.start(phone)
-
+        
         return await self._handle_new_session(client)
+
 
     async def _initial_setup(self) -> bool:
         """Responsible for first start"""
@@ -815,7 +836,7 @@ class Heroku:
             client._tg_id = me.id
             client.tg_id = me.id
             client.heroku_me = me
-
+            
             async with aiohttp.ClientSession() as session:
                 async with session.get("https://raw.githubusercontent.com/coddrago/modules-web/main/mods/ids/allowed_ids.txt") as response:
                     if response.status == 200:
@@ -824,7 +845,7 @@ class Heroku:
                     else:
                         logging.error(f"Exception on loading allowed beta testers ids: {response.status}")
                         return []
-
+            
             await asyncio.gather(*[version.check_branch((await client.get_me()).id, allowed_ids) for client in self.clients])
 
             while await self.amain(first, client):
@@ -843,10 +864,13 @@ class Heroku:
 
             logo = (
                 "                          _           \n"
-               r"  /\  /\ ___  _ __  ___  | | __ _   _ ""\n"
-               r" / /_/ // _ \| '__|/ _ \ | |/ /| | | |""\n"
+                r"  /\  /\ ___  _ __  ___  | | __ _   _ "
+                "\n"
+                r" / /_/ // _ \| '__|/ _ \ | |/ /| | | |"
+                "\n"
                 "/ __  /|  __/| |  | (_) ||   < | |_| |\n"
-               r"\/ /_/  \___||_|   \___/ |_|\_\ \__,_|""\n\n"
+                r"\/ /_/  \___||_|   \___/ |_|\_\ \__,_|"
+                "\n\n"
                 f"• Build: {build[:7]}\n"
                 f"• Version: {'.'.join(list(map(str, list(__version__))))}\n"
                 f"• {upd}\n"
