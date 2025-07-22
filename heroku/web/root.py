@@ -1,14 +1,8 @@
 """Main bot page"""
 
 # ©️ Dan Gazizullin, 2021-2023
-# This file is a part of Heroku Userbot
-# 🌐 https://github.com/hikariatama/Heroku
-# You can redistribute it and/or modify it under the terms of the GNU AGPLv3
-# 🔑 https://www.gnu.org/licenses/agpl-3.0.html
-
-# ©️ Codrago, 2024-2025
-# This file is a part of Heroku Userbot
-# 🌐 https://github.com/coddrago/Heroku
+# This file is a part of Hikka Userbot
+# 🌐 https://github.com/hikariatama/Hikka
 # You can redistribute it and/or modify it under the terms of the GNU AGPLv3
 # 🔑 https://www.gnu.org/licenses/agpl-3.0.html
 
@@ -22,6 +16,7 @@ import string
 import time
 
 import aiohttp_jinja2
+import jinja2
 import requests
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiohttp import web
@@ -414,18 +409,15 @@ class Web:
 
         split = text.split("\n", 2)
 
-        if len(split) not in (2, 3):
+        if len(split) < 2:
             return web.Response(status=400)
 
         code = split[0]
         phone = parse_phone(split[1])
-        password = split[2]
+        # ✅ FIX: Check if password exists before accessing it
+        password = split[2] if len(split) > 2 else None
 
-        if (
-            (len(code) != 5 and not password)
-            or any(c not in string.digits for c in code)
-            or not phone
-        ):
+        if not code or any(c not in string.digits for c in code) or not phone:
             return web.Response(status=400)
 
         if not password:

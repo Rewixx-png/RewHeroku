@@ -35,8 +35,8 @@ html {
     position: fixed;
     z-index: -1;
     border-radius: 50%;
-    background: radial-gradient(circle, rgba(135,116,225,0.2) 0%, rgba(13,17,28,0) 60%);
-    filter: blur(100px);
+    background: radial-gradient(circle, rgba(135,116,225,0.25) 0%, rgba(13,17,28,0) 60%);
+    filter: blur(120px);
 }
 
 @keyframes fadein {
@@ -81,6 +81,11 @@ html {
     justify-content: space-between;
     min-width: 500px;
     min-height: 450px;
+    transition: box-shadow 0.3s ease-in-out;
+}
+
+.main.installation:hover {
+    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.3), 0 0 50px rgba(135, 116, 225, 0.15);
 }
 
 .center {
@@ -95,7 +100,7 @@ html {
 
 .blur {
     padding: 3rem 4rem;
-    border-radius: 1rem;
+    border-radius: 24px;
     background-color: rgba(22, 24, 29, 0.7);
     border: 1px solid rgba(50, 50, 55, 1);
     backdrop-filter: blur(12px);
@@ -106,7 +111,7 @@ html {
 }
 
 .button {
-    border-radius: 8px;
+    border-radius: 12px;
     padding: 12px 24px;
     border: none;
     color: #eee;
@@ -127,6 +132,7 @@ html {
     background: rgba(55, 55, 60, 1);
     border-color: #8774e1;
     transform: translateY(-2px);
+    box-shadow: 0 4px 15px rgba(135, 116, 225, 0.2);
 }
 
 .button .horiz_center {
@@ -137,7 +143,7 @@ input {
     outline: none;
     color: #fff;
     text-align: center;
-    border-radius: 8px;
+    border-radius: 12px;
     padding: 12px 20px;
     border: 1px solid rgba(60, 60, 65, 1);
     background: rgba(20, 20, 22, 0.7);
@@ -219,7 +225,21 @@ label {
 .progress-bar {
     display: flex;
     justify-content: center;
+    align-items: center;
     margin-bottom: 30px;
+    position: relative;
+}
+
+.progress-bar::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 15%;
+    right: 15%;
+    height: 2px;
+    background-color: #444;
+    transform: translateY(-50%);
+    z-index: -1;
 }
 
 .progress-step {
@@ -231,9 +251,11 @@ label {
     display: flex;
     align-items: center;
     justify-content: center;
-    margin: 0 10px;
+    margin: 0 20px;
     transition: all 0.3s ease;
     border: 2px solid #444;
+    position: relative;
+    z-index: 1;
 }
 
 .progress-step.active {
@@ -241,6 +263,7 @@ label {
     border-color: #8774e1;
     color: #fff;
     transform: scale(1.1);
+    box-shadow: 0 0 15px rgba(135, 116, 225, 0.5);
 }
 
 .navigation-buttons {
