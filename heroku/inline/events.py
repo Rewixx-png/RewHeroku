@@ -220,13 +220,10 @@ class Events(InlineUnit):
         """Callback query handler (buttons' presses)"""
         if reply_markup is None:
             reply_markup = []
-        
-        # <<< ИСПРАВЛЕНИЕ ЗДЕСЬ >>>
-        if match := re.search(r"authorize_web_(.{8})", call.data):
-            self._web_auth_tokens.append(match.group(1))
-            await call.answer("✅ Authenticated! You can return to your browser.", show_alert=True)
+
+        if re.search(r"authorize_web_(.{8})", call.data):
+            self._web_auth_tokens += [re.search(r"authorize_web_(.{8})", call.data)[1]]
             return
-        # <<< КОНЕЦ ИСПРАВЛЕНИЯ >>>
 
         for func in self._allmodules.callback_handlers.values():
             if await self.check_inline_security(func=func, user=call.from_user.id):
