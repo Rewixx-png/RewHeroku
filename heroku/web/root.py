@@ -78,12 +78,6 @@ class Web:
         self.api_set = asyncio.Event()
         self.clients_set = asyncio.Event()
 
-    async def schedule_restart(self,One=None):
-        # Yeah-yeah, ikr, but it's the only way to restart
-        await asyncio.sleep(1)
-        await main.heroku.save_client_session(self._pending_client, delay_restart=False)
-        restart()
-
     @property
     def _platform_emoji(self) -> str:
         return {
@@ -275,10 +269,11 @@ class Web:
         if self._qr_login is True:
             if self._2fa_needed:
                 return web.Response(status=403, body="2FA")
-
-
-            asyncio.ensure_future(self.schedule_restart(self))
-            # self.schedule_restart()
+            
+            # This path is hit when QR is scanned but no 2FA is needed
+            if self._pending_client:
+                await main.heroku.save_client_session(self._pending_client)
+            
             return web.Response(status=200, body="SUCCESS")
 
         if self._qr_login is None:
@@ -394,8 +389,7 @@ class Web:
 
         logger.debug("2FA code accepted, logging in")
         
-        asyncio.ensure_future(self.schedule_restart(self))
-        # self.schedule_restart()
+        await main.heroku.save_client_session(self._pending_client)
         return web.Response(status=200, body="SUCCESS")
 
     async def tg_code(self, request: web.Request) -> web.Response:
@@ -414,7 +408,6 @@ class Web:
 
         code = split[0]
         phone = parse_phone(split[1])
-        # ✅ FIX: Check if password exists before accessing it
         password = split[2] if len(split) > 2 else None
 
         if not code or any(c not in string.digits for c in code) or not phone:
@@ -451,28 +444,21 @@ class Web:
                     body=(self._render_fw_error(e)),
                 )
 
-        
-        asyncio.ensure_future(self.schedule_restart(self))
-        # self.schedule_restart()
+        await main.heroku.save_client_session(self._pending_client)
         return web.Response(status=200, body="SUCCESS")
 
     async def finish_login(self, request: web.Request) -> web.Response:
+        # This endpoint is now primarily for confirming to the browser
+        # but the actual logic is handled in tg_code and qr_2fa
         if not self._check_session(request):
             return web.Response(status=401)
 
-        if not self._pending_client:
-            return web.Response(status=400)
-
-        first_session = not bool(main.heroku.clients)
-
-        # Client is ready to pass in to dispatcher
-        main.heroku.clients = list(set(main.heroku.clients + [self._pending_client]))
-        self._pending_client = None
+        # This client should have been processed already.
+        # Clear it just in case, but don't use it.
+        if self._pending_client:
+            self._pending_client = None
 
         self.clients_set.set()
-
-        if not first_session:
-            restart()
 
         return web.Response()
 

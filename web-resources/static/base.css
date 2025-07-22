@@ -366,3 +366,7 @@ label {
     left: -7px;
     border-radius: 2px
 }
+
+.auth.vert_center {
+    display: none; /* Hidden by default */
+}
