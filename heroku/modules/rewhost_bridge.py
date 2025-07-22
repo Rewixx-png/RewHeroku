@@ -75,24 +75,24 @@ class RewHostBridgeMod(loader.Module):
             loader.ConfigValue("host_url", "https://rewixx.ru", "URL API хостинга", validator=loader.validators.Link())
         )
 
-    # <<< ИСПРАВЛЕНИЕ: Новая вспомогательная функция >>>
     def _format_seconds(self, seconds: int) -> str:
-        """Форматирует секунды в дни, часы, минуты, секунды."""
+        """Formats seconds into days, hours, minutes, seconds."""
         if not isinstance(seconds, (int, float)) or seconds <= 0:
             return "Время истекло"
+        
         td = timedelta(seconds=seconds)
-        days, remainder = divmod(td.seconds, 86400)
-        hours, remainder = divmod(remainder, 3600)
+        days = td.days
+        hours, remainder = divmod(td.seconds, 3600)
         minutes, seconds = divmod(remainder, 60)
         
         parts = []
-        if td.days > 0:
-            parts.append(f"{td.days} д")
+        if days > 0:
+            parts.append(f"{days} д")
         if hours > 0:
             parts.append(f"{hours} ч")
         if minutes > 0:
             parts.append(f"{minutes} м")
-        if not parts: # Если осталось меньше минуты
+        if not parts or (days == 0 and hours == 0 and minutes == 0):
              parts.append(f"{seconds} с")
 
         return " ".join(parts)
@@ -156,7 +156,6 @@ class RewHostBridgeMod(loader.Module):
             details = details_response.get("data", {})
             status_emojis = {"running": "🟢", "exited": "🔴", "restarting": "🟡"}
             
-            # <<< ИСПРАВЛЕНИЕ: Вызываем новую функцию _format_seconds >>>
             text = self.strings("container_info").format(
                 name=details.get('container_name', 'N/A'), id=details.get('id', 'N/A'),
                 status=details.get('status', 'N/A'), status_emoji=status_emojis.get(details.get('status'), '❓'),
@@ -240,55 +239,4 @@ class RewHostBridgeMod(loader.Module):
             container = await self._get_container(message, args)
             if container: await self._perform_action(message, "status", container['id'])
         else:
-            await self._interactive_selector(message, "status")
-
-    @loader.command()
-    async def rhstart(self, message: Message):
-        """[ID] - Запустить ваш UserBot на хостинге"""
-        args = utils.get_args(message)
-        if args:
-            container = await self._get_container(message, args)
-            if container: await self._perform_action(message, "start", container['id'])
-        else:
-            await self._interactive_selector(message, "start")
-
-    @loader.command()
-    async def rhstop(self, message: Message):
-        """[ID] - Остановить ваш UserBot на хостинге"""
-        args = utils.get_args(message)
-        if args:
-            container = await self._get_container(message, args)
-            if container: await self._perform_action(message, "stop", container['id'])
-        else:
-            await self._interactive_selector(message, "stop")
-
-    @loader.command()
-    async def rhrestart(self, message: Message):
-        """[ID] - Перезапустить ваш UserBot на хостинге"""
-        args = utils.get_args(message)
-        if args:
-            container = await self._get_container(message, args)
-            if container: await self._perform_action(message, "restart", container['id'])
-        else:
-            await self._interactive_selector(message, "restart")
-            
-    @loader.command(alias="rhlogss")
-    async def rhlogs(self, message: Message):
-        """[ID] [кол-во строк] - Показать логи UserBot'а"""
-        args = utils.get_args(message)
-        try:
-            lines = int(args[1]) if len(args) > 1 else 100
-        except (ValueError, IndexError):
-            lines = 100
-            
-        if args:
-            container = await self._get_container(message, args)
-            if container: await self._perform_action(message, "logs", container['id'], lines=lines)
-        else:
-            await self._interactive_selector(message, "logs")
-
-    async def rh_interactive_callback(self, call: InlineCall, action: str, container_id: int):
-        """Обрабатывает нажатия кнопок из интерактивного селектора."""
-        await self._perform_action(call, action, container_id)
-
-# --- END OF FILE RewHeroku-master/heroku/modules/rewhost_bridge.py ---
+            await self._interactive_selector(
