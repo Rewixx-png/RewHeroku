@@ -132,7 +132,7 @@ class Web:
     def _check_session(self, request: web.Request) -> bool:
         if not main.heroku.clients:
             return True
-
+        
         return request.cookies.get("session", None) in self._sessions
 
     async def _check_bot(
@@ -330,8 +330,16 @@ class Web:
         if self.client_data and "LAVHOST" in os.environ:
             return web.Response(status=403, body="Forbidden by host EULA")
 
+        # --- НАЧАЛО ИСПРАВЛЕНИЯ ---
+        # Если предыдущая попытка входа "зависла", отменяем её
         if self._pending_client:
-            return web.Response(status=208, body="Already pending")
+            logger.warning("Cancelling previous pending login session.")
+            try:
+                await self._pending_client.disconnect()
+            except Exception:
+                pass  # Игнорируем ошибки, сессия может быть уже закрыта
+            self._pending_client = None
+        # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
         text = await request.text()
         phone = parse_phone(text)
@@ -340,14 +348,19 @@ class Web:
             return web.Response(status=400, body="Invalid phone number")
 
         client = self._get_client()
-
         self._pending_client = client
 
         await client.connect()
         try:
             await client.send_code_request(phone)
         except FloodWaitError as e:
+            self._pending_client = None # Очищаем состояние при ошибке
             return web.Response(status=429, body=self._render_fw_error(e))
+        except Exception as e:
+            logger.error("Failed to send code request: %s", e)
+            self._pending_client = None # Очищаем состояние при ошибке
+            return web.Response(status=500, body=f"Error: {e}")
+
 
         return web.Response(body="ok")
 
@@ -521,8 +534,6 @@ class Web:
                 pass
 
         if not ops:
-            # Если по какой-то причине не удалось отправить сообщение ни одному клиенту
-            # (например, инлайн-бот неактивен), мы не должны выдавать сессию
             return web.Response(body="CONFIRMATION_FAILED")
 
         if not await main.heroku.wait_for_web_auth(token):
