@@ -1,8 +1,8 @@
 """Main bot page"""
 
 # ©️ Dan Gazizullin, 2021-2023
-# This file is a part of Hikka Userbot
-# 🌐 https://github.com/hikariatama/Hikka
+# This file is a part of Heroku Userbot
+# 🌐 https://github.com/hikariatama/Heroku
 # You can redistribute it and/or modify it under the terms of the GNU AGPLv3
 # 🔑 https://www.gnu.org/licenses/agpl-3.0.html
 
@@ -20,7 +20,6 @@ import os
 import re
 import string
 import time
-import typing
 
 import aiohttp_jinja2
 import requests
@@ -45,11 +44,6 @@ from .. import database, main, utils
 from .._internal import restart
 from ..tl_cache import CustomTelegramClient
 from ..version import __version__
-
-# <<< НАЧАЛО ИСПРАВЛЕНИЯ: Убираем прямой импорт, чтобы разорвать цикл >>>
-if typing.TYPE_CHECKING:
-    from ..loader import Modules
-# <<< КОНЕЦ ИСПРАВЛЕНИЯ >>>
 
 DATA_DIR = (
     "/data"
@@ -118,7 +112,6 @@ class Web:
             "skip_creds": self.api_token is not None,
             "tg_done": bool(self.client_data),
             "lavhost": "LAVHOST" in os.environ,
-            "rewhost": "REWHOST" in os.environ,
             "platform_emoji": self._platform_emoji,
         }
 
