@@ -76,7 +76,7 @@ class RewHostBridgeMod(loader.Module):
         )
 
     def _format_seconds(self, seconds: int) -> str:
-        """Formats seconds into days, hours, minutes, seconds."""
+        """Форматирует секунды в дни, часы, минуты, секунды."""
         if not isinstance(seconds, (int, float)) or seconds <= 0:
             return "Время истекло"
         
@@ -239,4 +239,55 @@ class RewHostBridgeMod(loader.Module):
             container = await self._get_container(message, args)
             if container: await self._perform_action(message, "status", container['id'])
         else:
-            await self._interactive_selector(
+            await self._interactive_selector(message, "status")
+
+    @loader.command()
+    async def rhstart(self, message: Message):
+        """[ID] - Запустить ваш UserBot на хостинге"""
+        args = utils.get_args(message)
+        if args:
+            container = await self._get_container(message, args)
+            if container: await self._perform_action(message, "start", container['id'])
+        else:
+            await self._interactive_selector(message, "start")
+
+    @loader.command()
+    async def rhstop(self, message: Message):
+        """[ID] - Остановить ваш UserBot на хостинге"""
+        args = utils.get_args(message)
+        if args:
+            container = await self._get_container(message, args)
+            if container: await self._perform_action(message, "stop", container['id'])
+        else:
+            await self._interactive_selector(message, "stop")
+
+    @loader.command()
+    async def rhrestart(self, message: Message):
+        """[ID] - Перезапустить ваш UserBot на хостинге"""
+        args = utils.get_args(message)
+        if args:
+            container = await self._get_container(message, args)
+            if container: await self._perform_action(message, "restart", container['id'])
+        else:
+            await self._interactive_selector(message, "restart")
+            
+    @loader.command(alias="rhlogss")
+    async def rhlogs(self, message: Message):
+        """[ID] [кол-во строк] - Показать логи UserBot'а"""
+        args = utils.get_args(message)
+        try:
+            lines = int(args[1]) if len(args) > 1 else 100
+        except (ValueError, IndexError):
+            lines = 100
+            
+        if args:
+            container = await self._get_container(message, args)
+            if container: await self._perform_action(message, "logs", container['id'], lines=lines)
+        else:
+            await self._interactive_selector(message, "logs")
+
+    async def rh_interactive_callback(self, call: InlineCall, action: str, container_id: int):
+        """Обрабатывает нажатия кнопок из интерактивного селектора."""
+        await self._perform_action(call, action, container_id)
+
+# --- END OF FILE RewHeroku-master/heroku/modules/rewhost_bridge.py ---
