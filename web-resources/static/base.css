@@ -199,17 +199,16 @@ label {
 
 /* Wizard styles */
 .wizard-step {
-    display: none;
+    display: none; /* Hide all steps by default */
     animation: fadeIn 0.5s ease-in-out;
     width: 100%;
     flex-grow: 1;
-    display: flex;
     flex-direction: column;
     justify-content: center;
 }
 
 .wizard-step.active {
-    display: flex;
+    display: flex; /* Show only the active step */
 }
 
 @keyframes fadeIn {
