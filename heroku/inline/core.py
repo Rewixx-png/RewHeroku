@@ -33,6 +33,7 @@ import string
 import re
 import time
 import random
+import typing # <-- Добавлен этот импорт
 
 import aiohttp_jinja2
 import jinja2
@@ -53,7 +54,7 @@ from herokutl.tl.functions.contacts import UnblockRequest
 from herokutl.utils import parse_phone
 
 from ..database import Database
-from ..loader import Modules
+# from ..loader import Modules  # <-- Эта строка удалена
 from ..tl_cache import CustomTelegramClient
 from . import proxypass, root
 from .. import main, utils, version
@@ -155,7 +156,7 @@ class Web(root.Web):
     async def add_loader(
         self,
         client: CustomTelegramClient,
-        loader: Modules,
+        loader: "Modules", # <-- Тип указан как строка
         db: Database,
     ):
         self.client_data[client.tg_id] = (loader, client, db)

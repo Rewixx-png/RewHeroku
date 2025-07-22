@@ -17,8 +17,8 @@
 #    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 # ©️ Dan Gazizullin, 2021-2023
-# This file is a part of Heroku Userbot
-# 🌐 https://github.com/hikariatama/Heroku
+# This file is a part of Hikka Userbot
+# 🌐 https://github.com/hikariatama/Hikka
 # You can redistribute it and/or modify it under the terms of the GNU AGPLv3
 # 🔑 https://www.gnu.org/licenses/agpl-3.0.html
 
@@ -28,13 +28,14 @@ import inspect
 import logging
 import os
 import subprocess
+import typing # <-- Добавлен этот импорт
 
 import aiohttp_jinja2
 import jinja2
 from aiohttp import web
 
 from ..database import Database
-from ..loader import Modules
+# from ..loader import Modules # <-- Эта строка удалена
 from ..tl_cache import CustomTelegramClient
 from . import proxypass, root
 
@@ -123,7 +124,7 @@ class Web(root.Web):
     async def add_loader(
         self,
         client: CustomTelegramClient,
-        loader: Modules,
+        loader: "Modules", # <-- Тип указан как строка
         db: Database,
     ):
         self.client_data[client.tg_id] = (loader, client, db)
