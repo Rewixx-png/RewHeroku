@@ -56,7 +56,7 @@ from herokutl.utils import parse_phone
 from ..database import Database
 # from ..loader import Modules  # <-- Эта строка удалена
 from ..tl_cache import CustomTelegramClient
-from . import proxypass, root
+from ..web import proxypass, root
 from .. import main, utils, version
 from .._internal import restart
 from ..version import __version__
