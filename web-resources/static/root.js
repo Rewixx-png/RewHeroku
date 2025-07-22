@@ -1,286 +1,248 @@
-// Global state
-let currentStep = 1;
-const totalSteps = 4;
-let authMethod = ''; // 'phone' or 'qr'
-let phone_hash;
+/*
+  ©️ Dan Gazizullin, 2021-2023
+  This file is a part of Hikka Userbot
+  🌐 https://github.com/hikariatama/Hikka
+  You can redistribute it and/or modify it under the terms of the GNU AGPLv3
+  🔑 https://www.gnu.org/licenses/agpl-3.0.html
+*/
 
-// DOM Elements
-const wizard = document.getElementById('wizard');
-const startBtn = document.getElementById('start-btn');
-const backBtn = document.getElementById('back-btn');
-const nextBtn = document.getElementById('next-btn');
-const authPhoneBtn = document.getElementById('auth-phone-btn');
-const authQrBtn = document.getElementById('auth-qr-btn');
+$(document).ready(function() {
+    let currentStep = 1;
 
-const phoneInput = document.getElementById('phone');
-const codeInput = document.getElementById('code');
-const passwordInput = document.getElementById('password');
-
-const installationIcon = document.getElementById('installation_icon');
-const authOverlay = document.querySelector('.auth.vert_center');
-
-// Lottie Animations
-if (installationIcon) {
-    lottie.loadAnimation({
-        container: installationIcon,
-        renderer: 'svg',
-        loop: true,
-        autoplay: true,
-        path: '/static/success.json'
-    });
-}
-if (authOverlay) {
-    lottie.loadAnimation({
-        container: document.getElementById('tg_icon'),
-        renderer: 'svg',
-        loop: true,
-        autoplay: true,
-        path: '/static/telegram.json'
-    });
-}
-
-// Functions
-function updateProgressBar() {
-    const steps = document.querySelectorAll('.progress-step');
-    steps.forEach(step => {
-        const stepNum = parseInt(step.getAttribute('data-step'));
-        step.classList.toggle('active', stepNum <= currentStep);
-    });
-}
-
-function showStep(stepNumber) {
-    document.querySelectorAll('.wizard-step').forEach(step => step.classList.remove('active'));
-    const nextStep = document.getElementById(`step-${stepNumber}`);
-    if (nextStep) nextStep.classList.add('active');
-    currentStep = stepNumber;
-    updateProgressBar();
-    updateNavigation();
-}
-
-function updateNavigation() {
-    backBtn.style.display = currentStep > 1 && currentStep < totalSteps ? 'inline-flex' : 'none';
-    nextBtn.style.display = currentStep === 3 ? 'inline-flex' : 'none';
-    
-    if (currentStep === 2) {
-         backBtn.style.display = 'inline-flex';
+    function goToStep(step) {
+        $(".wizard-step").removeClass("active");
+        $("#step-" + step).addClass("active");
+        $(".progress-step").removeClass("active");
+        $(`.progress-step[data-step="${step}"]`).addClass("active");
+        currentStep = step;
+        updateNavButtons();
     }
-}
 
-function reauthenticateAndStart() {
-    console.log("Starting re-authentication...");
-    authOverlay.style.display = 'flex';
-    fetch("/web_auth", { method: "POST", credentials: "include" })
-        .then(response => response.text())
-        .then(response => {
-            authOverlay.style.display = 'none';
-            if (response === "TIMEOUT") {
-                Swal.fire('Тайм-аут', 'Вы не подтвердили вход в Telegram.', 'error');
-            } else {
-                console.log("Re-authentication successful, moving to step 2.");
-                $.cookie("session", response, { expires: 1, path: '/' });
-                showStep(2);
-            }
-        })
-        .catch(error => {
-            authOverlay.style.display = 'none';
-            Swal.fire('Ошибка', `Не удалось выполнить аутентификацию: ${error}`, 'error');
-        });
-}
-
-
-function handlePhoneSubmission() {
-    if (phone_hash) {
-        if (document.getElementById('block_2fa').style.display !== 'none') {
-            submit2FA();
+    function updateNavButtons() {
+        if (currentStep > 1 && currentStep < 4) {
+            $("#back-btn").show();
         } else {
-            submitCode();
+            $("#back-btn").hide();
         }
-    } else {
-        submitPhone();
-    }
-}
 
-function submitPhone() {
-    const phone = phoneInput.value;
-    if (!phone) {
-        Swal.fire('Ошибка', 'Пожалуйста, введите номер телефона.', 'error');
-        return;
-    }
-    
-    nextBtn.innerHTML = '<div class="vert_center">Загрузка...</div>';
-    nextBtn.disabled = true;
-
-    fetch("/send_tg_code", { method: "POST", body: phone, credentials: "include" })
-        .then(response => {
-            if (response.status === 200) {
-                document.getElementById('block_phone').style.display = 'none';
-                document.getElementById('block_code').style.display = 'block';
-                Swal.fire('Успех', 'Код отправлен в Telegram!', 'success');
-                phone_hash = "set";
-            } else {
-                return response.text().then(text => Promise.reject(text));
-            }
-        })
-        .catch(error => {
-            Swal.fire('Ошибка', `Не удалось отправить код: ${error}`, 'error');
-        })
-        .finally(() => {
-            nextBtn.innerHTML = '<div class="vert_center">Далее</div>';
-            nextBtn.disabled = false;
-        });
-}
-
-function submitCode() {
-    const code = codeInput.value;
-    if (!code) {
-        Swal.fire('Ошибка', 'Пожалуйста, введите код подтверждения.', 'error');
-        return;
-    }
-    
-    nextBtn.innerHTML = '<div class="vert_center">Проверка...</div>';
-    nextBtn.disabled = true;
-
-    fetch("/tg_code", { method: "POST", body: code + "\n" + phoneInput.value, credentials: "include" })
-        .then(response => {
-            if (response.status === 200) {
-                 finishLogin();
-            } else if (response.status === 401) {
-                document.getElementById('block_code').style.display = 'none';
-                document.getElementById('block_2fa').style.display = 'block';
-                Swal.fire('Внимание', 'Требуется пароль двухфакторной аутентификации.', 'info');
-            } else {
-                return response.text().then(text => Promise.reject(text));
-            }
-        })
-        .catch(error => {
-            Swal.fire('Ошибка', `Неверный код: ${error}`, 'error');
-        })
-        .finally(() => {
-            nextBtn.innerHTML = '<div class="vert_center">Далее</div>';
-            nextBtn.disabled = false;
-        });
-}
-
-function submit2FA() {
-    const password = passwordInput.value;
-    if (!password) {
-        Swal.fire('Ошибка', 'Пожалуйста, введите пароль 2FA.', 'error');
-        return;
-    }
-
-    nextBtn.innerHTML = '<div class="vert_center">Вход...</div>';
-    nextBtn.disabled = true;
-
-    fetch("/tg_code", { method: "POST", body: codeInput.value + "\n" + phoneInput.value + "\n" + password, credentials: "include" })
-        .then(response => {
-            if (response.status === 200) {
-                finishLogin();
-            } else {
-                return response.text().then(text => Promise.reject(text));
-            }
-        })
-        .catch(error => {
-            Swal.fire('Ошибка', `Неверный пароль: ${error}`, 'error');
-        })
-        .finally(() => {
-            nextBtn.innerHTML = '<div class="vert_center">Далее</div>';
-            nextBtn.disabled = false;
-        });
-}
-
-function finishLogin() {
-    showStep(4);
-    fetch("/finish_login", { method: "POST", credentials: "include" })
-        .catch(error => {
-            console.error('Finish login call failed, but proceeding with UI. Error:', error);
-        });
-}
-
-// QR Code Logic
-let qrTask = null;
-const qrCode = new QRCodeStyling({
-    width: 256,
-    height: 256,
-    type: "svg",
-    dotsOptions: { color: "#000", type: "rounded" },
-    backgroundOptions: { color: "transparent" },
-    cornersSquareOptions: { color: "#000", type: "extra-rounded" },
-    cornersDotOptions: { color: "#000", type: "dot" }
-});
-
-function initQrLogin() {
-    const qrContainer = document.querySelector("#qr-auth-content .qr_inner");
-    qrContainer.innerHTML = '';
-    qrCode.append(qrContainer);
-    
-    fetch("/init_qr_login", { method: "POST", credentials: "include" })
-        .then(response => response.text())
-        .then(url => {
-            qrCode.update({ data: url });
-            qrTask = setInterval(pollQrStatus, 2000);
-        })
-        .catch(error => Swal.fire('Ошибка', `Не удалось инициализировать QR-вход: ${error}`, 'error'));
-}
-
-function pollQrStatus() {
-    fetch("/get_qr_url", { method: "POST", credentials: "include" })
-        .then(response => {
-            if (response.status === 200) {
-                clearInterval(qrTask);
-                finishLogin();
-            } else if (response.status === 403) {
-                clearInterval(qrTask);
-                promptQr2FA();
-            } else if (response.status === 201) {
-                return response.text().then(url => qrCode.update({ data: url }));
-            }
-        })
-        .catch(error => {
-            clearInterval(qrTask);
-            Swal.fire('Ошибка', `Ошибка проверки QR-кода: ${error}`, 'error');
-        });
-}
-
-async function promptQr2FA() {
-    const { value: password } = await Swal.fire({
-        title: 'Требуется пароль 2FA',
-        input: 'password',
-        inputLabel: 'Введите ваш пароль двухфакторной аутентификации',
-        inputPlaceholder: 'Пароль',
-        showCancelButton: true,
-        inputValidator: (value) => {
-            if (!value) {
-                return 'Вы должны ввести пароль!';
-            }
-        }
-    });
-
-    if (password) {
-        fetch("/qr_2fa", { method: "POST", body: password, credentials: "include" })
-            .then(response => {
-                if (response.status === 200) {
-                    finishLogin();
-                } else {
-                    return response.text().then(text => Promise.reject(text));
-                }
-            })
-            .catch(error => Swal.fire('Ошибка', `Неверный пароль: ${error}`, 'error'));
-    }
-}
-
-// Initial state and event listeners
-document.addEventListener('DOMContentLoaded', () => {
-    startBtn.addEventListener('click', () => {
-        console.log("Start button clicked. tg_done:", tg_done);
-        if (tg_done) {
-            reauthenticateAndStart();
+        if (currentStep > 1 && currentStep < 3) {
+            $("#next-btn").show();
         } else {
-            showStep(2);
+            $("#next-btn").hide();
         }
-    });
+    }
+    
+    // Новая функция для сброса визарда
+    function resetAndShowWizard() {
+        // Сбросить все шаги и прогресс
+        $(".wizard-step").removeClass("active");
+        $(".progress-step").removeClass("active");
 
-    showStep(1);
+        // Показать первый шаг
+        $("#step-1").addClass("active");
+        $(".progress-step[data-step='1']").addClass("active");
+        currentStep = 1;
+        
+        // Скрыть кнопки навигации, так как мы на первом шаге
+        $("#back-btn, #next-btn").hide();
+        
+        // Показать кнопку "Начать настройку"
+        $("#start-btn").show();
+    }
+
     if (tg_done) {
-        document.querySelector("#start-btn .vert_center").innerText = 'Добавить аккаунт';
+        // Если установка уже завершена, сразу показываем финальный шаг
+        goToStep(4);
+        lottie.loadAnimation({
+            container: document.getElementById('installation_icon'),
+            renderer: 'svg',
+            loop: false,
+            autoplay: true,
+            path: '/static/success.json'
+        });
+    }
+
+    $("#start-btn").on("click", function() {
+        goToStep(2);
+    });
+
+    $("#auth-phone-btn").on("click", function() {
+        goToStep(3);
+        $("#qr-auth-content").hide();
+        $("#phone-auth-content").show();
+        $("#next-btn").show(); // Показываем кнопку "Далее" для телефона
+    });
+
+    $("#auth-qr-btn").on("click", function() {
+        goToStep(3);
+        $("#phone-auth-content").hide();
+        $("#qr-auth-content").show();
+        $("#next-btn").hide(); // QR-код не требует кнопки "Далее"
+        init_qr_login();
+    });
+    
+    // Обработчик для новой кнопки
+    $("#add-account-btn").on("click", function() {
+        resetAndShowWizard();
+    });
+
+    $("#back-btn").on("click", function() {
+        if (currentStep > 1) {
+            goToStep(currentStep - 1);
+        }
+    });
+
+    $("#next-btn").on("click", function() {
+        if (currentStep < 4) {
+             if(currentStep == 3 && $("#phone-auth-content").is(":visible")) {
+                send_tg_code();
+             } else {
+                goToStep(currentStep + 1);
+             }
+        }
+    });
+
+    $('#phone').keypress(function (e) {
+        if (e.which == 13) {
+            send_tg_code();
+            return false;
+        }
+    });
+
+    $('#code').keypress(function (e) {
+        if (e.which == 13) {
+            tg_code();
+            return false;
+        }
+    });
+
+    $('#password').keypress(function (e) {
+        if (e.which == 13) {
+            tg_code();
+            return false;
+        }
+    });
+
+    function send_tg_code() {
+        var phone = $("#phone").val();
+        $.post( "/send_tg_code", phone, function( data ) {
+            if (data == "ok") {
+                $("#block_phone").fadeOut(200, function() {
+                    $("#block_code").fadeIn(200);
+                });
+            } else {
+                Swal.fire({
+                    icon: 'error',
+                    title: 'Oops...',
+                    text: data
+                })
+            }
+        });
+    }
+
+    function tg_code() {
+        var phone = $("#phone").val();
+        var code = $("#code").val();
+        var password = $("#password").val();
+        var data = code + "\n" + phone + "\n" + password;
+        $.post("/tg_code", data, function( data ) {
+            if (data == "SUCCESS") {
+                finish_login();
+            }
+        }).fail(function(data) {
+            if(data.status == 401) {
+                $("#block_code").fadeOut(200, function() {
+                    $("#block_2fa").fadeIn(200);
+                });
+            } else {
+                Swal.fire({
+                    icon: 'error',
+                    title: 'Oops...',
+                    text: data.responseText,
+                })
+            }
+        })
+    }
+    
+    function finish_login() {
+        $.post("/finish_login", function( data ) {
+            goToStep(4);
+            lottie.loadAnimation({
+                container: document.getElementById('installation_icon'),
+                renderer: 'svg',
+                loop: false,
+                autoplay: true,
+                path: '/static/success.json'
+            });
+        });
+    }
+
+    const qrCode = new QRCodeStyling({
+        width: 256,
+        height: 256,
+        type: "svg",
+        data: "https://heroku.com",
+        image: "/static/icon.png",
+        dotsOptions: {
+            color: "#8774e1",
+            type: "rounded"
+        },
+        backgroundOptions: {
+            color: "rgba(255, 255, 255, 0.9)",
+        },
+        imageOptions: {
+            crossOrigin: "anonymous",
+            margin: 5
+        }
+    });
+
+    function init_qr_login() {
+        qrCode.append(document.querySelector("#qr-auth-content .qr_inner"));
+        $.post("/init_qr_login", function (url) {
+            qrCode.update({ data: url });
+            check_qr_status();
+        });
+    }
+    
+    function check_qr_status() {
+        $.post("/get_qr_url", function(url) {
+            qrCode.update({ data: url });
+            setTimeout(check_qr_status, 1000);
+        }).fail(function(r) {
+            if (r.status == 200) {
+                finish_login();
+            } else if (r.status == 403) {
+                Swal.fire({
+                    title: 'Двухфакторная аутентификация',
+                    input: 'text',
+                    inputAttributes: {
+                        autocapitalize: 'off'
+                    },
+                    showCancelButton: false,
+                    confirmButtonText: 'Войти',
+                    showLoaderOnConfirm: true,
+                    preConfirm: (password) => {
+                        return $.post("/qr_2fa", password).then(response => {
+                            if (response != "SUCCESS") {
+                                throw new Error(response.responseText)
+                            }
+
+                            return response.data
+                        }).catch(error => {
+                            Swal.showValidationMessage(
+                                `Request failed: ${error}`
+                            )
+                        })
+                    },
+                    allowOutsideClick: false,
+                }).then((result) => {
+                    if (result.isConfirmed) {
+                        finish_login();
+                    }
+                })
+            } else {
+                setTimeout(check_qr_status, 1000);
+            }
+        });
     }
 });
