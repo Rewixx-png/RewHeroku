@@ -330,16 +330,18 @@ class Web:
         if self.client_data and "LAVHOST" in os.environ:
             return web.Response(status=403, body="Forbidden by host EULA")
 
-        # --- НАЧАЛО ИСПРАВЛЕНИЯ ---
-        # Если предыдущая попытка входа "зависла", отменяем её
         if self._pending_client:
+            if getattr(self._pending_client, "is_web", False):
+                logger.warning("Code request attempted, but user is already logged in. Prompting to finish.")
+                return web.Response(status=208, body="ALREADY_LOGGED_IN")
+            
             logger.warning("Cancelling previous pending login session.")
             try:
                 await self._pending_client.disconnect()
             except Exception:
-                pass  # Игнорируем ошибки, сессия может быть уже закрыта
+                pass
             self._pending_client = None
-        # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+
 
         text = await request.text()
         phone = parse_phone(text)
@@ -354,13 +356,12 @@ class Web:
         try:
             await client.send_code_request(phone)
         except FloodWaitError as e:
-            self._pending_client = None # Очищаем состояние при ошибке
+            self._pending_client = None
             return web.Response(status=429, body=self._render_fw_error(e))
         except Exception as e:
             logger.error("Failed to send code request: %s", e)
-            self._pending_client = None # Очищаем состояние при ошибке
+            self._pending_client = None
             return web.Response(status=500, body=f"Error: {e}")
-
 
         return web.Response(body="ok")
 
@@ -416,6 +417,10 @@ class Web:
     async def tg_code(self, request: web.Request) -> web.Response:
         if not self._check_session(request):
             return web.Response(status=401)
+
+        if not self._pending_client:
+            logger.error("tg_code called but no pending client session.")
+            return web.Response(status=400, body="No pending session. Please enter phone number again.")
 
         text = await request.text()
         if len(text) < 6:
