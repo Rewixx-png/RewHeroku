@@ -511,7 +511,6 @@ class Web(root.Web):
         await self._save_new_session(self._pending_client)
         return web.Response(status=200, body="SUCCESS")
 
-
     async def finish_login(self, request: web.Request) -> web.Response:
         if not self._check_session(request):
             return web.Response(status=401)
