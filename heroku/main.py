@@ -581,7 +581,11 @@ class Heroku:
 
         if delay_restart:
             client.disconnect()
-            await asyncio.sleep(3600)
+            # This sleep is intentional to allow the web server to respond
+            # before the process restarts. The original faulty sleep was
+            # a different one that blocked indefinitely.
+            await asyncio.sleep(1)
+
 
     async def _web_banner(self):
         """Shows web banner"""
