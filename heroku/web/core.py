@@ -56,7 +56,6 @@ from herokutl.utils import parse_phone
 
 from ..database import Database
 # <<< НАЧАЛО ИСПРАВЛЕНИЯ: Убираем прямой импорт, чтобы разорвать цикл >>>
-# from ..loader import Modules
 if typing.TYPE_CHECKING:
     from ..loader import Modules
 # <<< КОНЕЦ ИСПРАВЛЕНИЯ >>>
@@ -159,7 +158,7 @@ class Web(root.Web):
     async def add_loader(
         self,
         client: CustomTelegramClient,
-        loader: "Modules", # Используем строковый тип
+        loader: "Modules",
         db: Database,
     ):
         self.client_data[client.tg_id] = (loader, client, db)
@@ -514,7 +513,6 @@ class Web(root.Web):
 
         await self._save_new_session(self._pending_client)
         return web.Response(status=200, body="SUCCESS")
-
 
     async def finish_login(self, request: web.Request) -> web.Response:
         if not self._check_session(request):
