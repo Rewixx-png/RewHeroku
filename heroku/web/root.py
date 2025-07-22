@@ -1,4 +1,20 @@
-"""Main bot page"""
+"""Responsible for web init and mandatory ops"""
+
+#    Friendly Telegram (telegram userbot)
+#    Copyright (C) 2018-2021 The Authors
+
+#    This program is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU Affero General Public License as published by
+#    the Free Software Foundation, either version 3 of the License, or
+#    (at your option) any later version.
+
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU Affero General Public License for more details.
+
+#    You should have received a copy of the GNU Affero General Public License
+#    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 # ©️ Dan Gazizullin, 2021-2023
 # This file is a part of Hikka Userbot
@@ -114,11 +130,10 @@ class Web:
         return self.clients_set.wait()
 
     def _check_session(self, request: web.Request) -> bool:
-        return (
-            request.cookies.get("session", None) in self._sessions
-            if main.heroku.clients
-            else True
-        )
+        if not main.heroku.clients:
+            return True
+
+        return request.cookies.get("session", None) in self._sessions
 
     async def _check_bot(
         self,
@@ -427,8 +442,6 @@ class Web:
             return web.Response(status=401)
         
         if not self._pending_client or not getattr(self._pending_client, "is_web", False):
-            # If client is not pending from a web login, do nothing.
-            # This prevents accidental restarts if this endpoint is called unexpectedly.
             return web.Response(status=200)
 
         first_session = not bool(main.heroku.clients)
@@ -438,9 +451,7 @@ class Web:
         self.clients_set.set()
         
         if not first_session:
-            # Only restart if this is not the very first account being set up
-            # to avoid interrupting the initial setup flow.
-            await asyncio.sleep(1) # Give a moment for the response to be sent
+            await asyncio.sleep(1)
             restart()
 
         return web.Response()
@@ -449,13 +460,21 @@ class Web:
         if self._check_session(request):
             return web.Response(body=request.cookies.get("session", "unauthorized"))
 
+        session = f"heroku_{utils.rand(16)}"
+
+        if not main.heroku.clients:
+            logger.info("First login attempt. Granting session without confirmation.")
+            self._sessions.append(session)
+            return web.Response(body=session)
+
+        logger.info("Secondary login attempt. Requesting confirmation from owner.")
         token = utils.rand(8)
 
         markup = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text="🔓 Authorize user",
+                        text="🔓 Authorize Web Login",
                         callback_data=f"authorize_web_{token}",
                     )
                 ]
@@ -469,42 +488,21 @@ class Web:
             if ip not in self._ratelimit:
                 self._ratelimit[ip] = []
 
-            if (
-                len(
-                    list(
-                        filter(lambda x: time.time() - x < 3 * 60, self._ratelimit[ip])
-                    )
-                )
-                >= 3
-            ):
+            if len(list(filter(lambda x: time.time() - x < 3 * 60, self._ratelimit[ip]))) >= 3:
                 return web.Response(status=429)
 
-            self._ratelimit[ip] = list(
-                filter(lambda x: time.time() - x < 3 * 60, self._ratelimit[ip])
-            )
-
+            self._ratelimit[ip] = list(filter(lambda x: time.time() - x < 3 * 60, self._ratelimit[ip]))
             self._ratelimit[ip] += [time.time()]
+
             try:
-                res = (
-                    await utils.run_sync(
-                        requests.get,
-                        f"https://freegeoip.app/json/{ip}",
-                    )
-                ).json()
-                cities += [
-                    f"<i>{utils.get_lang_flag(res['country_code'])} {res['country_name']} {res['region_name']} {res['city']} {res['zip_code']}</i>"
-                ]
+                res = (await utils.run_sync(requests.get, f"https://freegeoip.app/json/{ip}")).json()
+                cities += [f"<i>{utils.get_lang_flag(res['country_code'])} {res['country_name']} {res['region_name']} {res['city']} {res['zip_code']}</i>"]
             except Exception:
                 pass
 
-        cities = (
-            ("<b>🏢 Possible cities:</b>\n\n" + "\n".join(cities) + "\n")
-            if cities
-            else ""
-        )
+        cities_text = ("<b>🏢 Possible cities:</b>\n\n" + "\n".join(cities) + "\n") if cities else ""
 
         ops = []
-
         for user in self.client_data.values():
             try:
                 bot = user[0].inline.bot
@@ -512,26 +510,20 @@ class Web:
                     chat_id=user[1].tg_id,
                     text=(
                         "🪐🔐 <b>Click button below to confirm web application"
-                        f" ops</b>\n\n<b>Client IP</b>: {ips}\n{cities}\n<i>If you did"
+                        f" ops</b>\n\n<b>Client IP</b>: {ips}\n{cities_text}\n<i>If you did"
                         " not request any codes, simply ignore this message</i>"
                     ),
                     disable_web_page_preview=True,
                     reply_markup=markup,
                 )
-                ops += [
-                    functools.partial(
-                        bot.delete_message,
-                        chat_id=msg.chat.id,
-                        message_id=msg.message_id,
-                    )
-                ]
+                ops.append(functools.partial(bot.delete_message, chat_id=msg.chat.id, message_id=msg.message_id))
             except Exception:
                 pass
 
-        session = f"heroku_{utils.rand(16)}"
-
         if not ops:
-            return web.Response(body=session)
+            # Если по какой-то причине не удалось отправить сообщение ни одному клиенту
+            # (например, инлайн-бот неактивен), мы не должны выдавать сессию
+            return web.Response(body="CONFIRMATION_FAILED")
 
         if not await main.heroku.wait_for_web_auth(token):
             for op in ops:
@@ -541,6 +533,6 @@ class Web:
         for op in ops:
             await op()
 
-        self._sessions += [session]
+        self._sessions.append(session)
 
         return web.Response(body=session)
