@@ -13,7 +13,7 @@
 <script src="//cdnjs.cloudflare.com/ajax/libs/bodymovin/5.8.1/lottie.min.js"></script>
 <script src="//unpkg.com/qr-code-styling@1.5.0/lib/qr-code-styling.js"></script>
 
-<link href="https://css.gg/css?=arrow-right-r|add|brackets|chevron-right-o|smartphone" rel="stylesheet">
+<link href="https://css.gg/css?=arrow-right-r|add|brackets|chevron-right-o|smartphone|key" rel="stylesheet">
 
 <link rel="stylesheet" href="{{ static("base.css") }}">
 {% endblock %}
@@ -23,11 +23,22 @@
 
 {% block after %}
 
-<div class="blur auth vert_center">
-  <div id="tg_icon"></div>
-  <div class="waiting_for_auth">Waiting for authentification...</div>
-  <div class="confirm_auth">Please, confirm action in <span style="color:#28a0dc">Telegram</span></div>
+<!-- <<< НАЧАЛО ИЗМЕНЕНИЙ: НОВАЯ ФОРМА ДЛЯ PIN-КОДА >>> -->
+<div class="blur pin-code-form" style="display: none;">
+    <div id="tg_icon"></div>
+    <div class="code-caption">Check your Telegram for a PIN code</div>
+    <div class="description" style="font-size: 18px; margin-top: 10px;">A one-time PIN has been sent to the userbot owner.</div>
+    <input type="text" class="pin-input" autocomplete="off" placeholder="••••••" maxlength="6">
+    <div class="button" id="verify_pin_btn">
+        <div class="horiz_center">
+            <div class="vert_center">Verify PIN</div>
+            <div class="vert_center"><i class="gg-key"></i></div>
+        </div>
+    </div>
 </div>
+<!-- <<< КОНЕЦ ИЗМЕНЕНИЙ >>> -->
+
+
 <div class="auth-code-form blur">
   <div id="monkey"></div>
   <div id="monkey-close"></div>
@@ -78,48 +89,31 @@
     <div class="description">Incomprehensibly <span style="color:#c54245">the best</span> userbot<br><span
         style="color: #18cc18; display: none" class="authorized">Authorized!</span></div>
     <div class="center">
-      <!-- <<< НАЧАЛО МОДИФИКАЦИЙ >>> -->
+      <!-- <<< НАЧАЛО ИЗМЕНЕНИЙ: Упрощенная логика кнопок >>> -->
       {% if not tg_done %}
-      <!-- Если ни один аккаунт еще не добавлен, показываем полную настройку -->
       <div class="button" id="get_started">
         <div class="horiz_center">
           <div class="vert_center">
             Get started
           </div>
-
           <div class="vert_center">
             <i class="gg-arrow-right-r"></i>
           </div>
         </div>
       </div>
-      
-      {% if not skip_creds %}
-      <div class="button" id="enter_api">
-        <div class="horiz_center">
-          <div class="vert_center">
-            Use custom API creds
+      {% else %}
+      <div class="button" id="add_another_account">
+          <div class="horiz_center">
+              <div class="vert_center">
+                  Add another account
+              </div>
+              <div class="vert_center">
+                  <i class="gg-add"></i>
+              </div>
           </div>
-
-          <div class="vert_center">
-            <i class="gg-brackets"></i>
-          </div>
-        </div>
       </div>
       {% endif %}
-      {% else %}
-        <!-- Если аккаунт уже добавлен, показываем кнопку для добавления нового -->
-        <div class="button" id="add_another_account">
-            <div class="horiz_center">
-                <div class="vert_center">
-                    Add another account
-                </div>
-                <div class="vert_center">
-                    <i class="gg-add"></i>
-                </div>
-            </div>
-        </div>
-      {% endif %}
-      <!-- <<< КОНЕЦ МОДИФИКАЦИЙ >>> -->
+      <!-- <<< КОНЕЦ ИЗМЕНЕНИЙ >>> -->
       
       <span id="block_api_id">
         <label class="api_id" for="api_id">Telegram API ID: </label>

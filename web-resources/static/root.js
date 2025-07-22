@@ -4,6 +4,9 @@ var phone = "";
 var code = "";
 var password = "";
 var session = $.cookie("session");
+// <<< НАЧАЛО ИЗМЕНЕНИЙ: Переменная для временной сессии с PIN-кодом >>>
+var pin_session_id = "";
+// <<< КОНЕЦ ИЗМЕНЕНИЙ >>>
 
 if (skip_creds) {
     $(".description").hide();
@@ -11,25 +14,112 @@ if (skip_creds) {
     $("#continue_btn, #denyqr").css("display", "flex");
 }
 
-function auth() {
-    if (auth_required) {
-        $(".auth").fadeIn(200);
-        $(".main").fadeOut(200);
-        fetch("/web_auth", {
-                method: "POST",
-                credentials: "include"
-            })
-            .then(response => response.text())
-            .then((response) => {
-                if (response != "TIMEOUT") {
-                    $.cookie("session", response);
-                    session = response;
-                    $(".auth").fadeOut(200);
-                    $(".main").fadeIn(200);
-                }
-            })
-    }
+// <<< НАЧАЛО ИЗМЕНЕНИЙ: Новая логика авторизации через PIN >>>
+function requestPin() {
+    $(".main").fadeOut(200);
+    $(".pin-code-form").fadeIn(200);
+    lottie.loadAnimation({
+        container: document.getElementById('tg_icon'),
+        renderer: 'svg',
+        loop: true,
+        autoplay: true,
+        path: 'https://static.dan.tatar/telegram.json'
+    });
+    fetch("/request_pin", {
+            method: "POST",
+            credentials: "include"
+        })
+        .then(response => response.json())
+        .then((data) => {
+            if (data.session_id) {
+                pin_session_id = data.session_id;
+            } else {
+                Swal.fire({
+                    icon: 'error',
+                    title: 'PIN Request Failed',
+                    text: data.message || "Could not request a PIN code.",
+                });
+                $(".pin-code-form").fadeOut(200);
+                $(".main").fadeIn(200);
+            }
+        });
 }
+
+$("#verify_pin_btn").on("click", function() {
+    let pin = $(".pin-input").val();
+    if (pin.length !== 6) {
+        Swal.fire({
+            icon: 'warning',
+            title: 'Invalid PIN',
+            text: 'Please enter the 6-digit PIN code you received in Telegram.',
+        });
+        return;
+    }
+
+    fetch("/verify_pin", {
+            method: "POST",
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                pin: pin,
+                session_id: pin_session_id
+            }),
+            credentials: "include"
+        })
+        .then(response => {
+            if (response.ok) {
+                return response.json();
+            } else {
+                return response.text().then(text => {
+                    throw new Error(text)
+                });
+            }
+        })
+        .then((data) => {
+            if (data.status === "ok") {
+                // Прячем форму PIN и показываем основную форму входа
+                $(".pin-code-form").fadeOut(200);
+                $(".main").fadeIn(200);
+                auth_required = false; // Мы авторизованы
+                $(".description").hide();
+                $("#block_qr_login, #denyqr").css("display", "block");
+                $("#get_started, #add_another_account, #enter_api").hide();
+                init_qr();
+            }
+        })
+        .catch(error => {
+            let errorMsg = "An unknown error occurred.";
+            try {
+                let jsonError = JSON.parse(error.message);
+                errorMsg = jsonError.message || "Invalid PIN or session expired.";
+            } catch (e) {
+                errorMsg = error.message || "Invalid PIN or session expired.";
+            }
+
+            Swal.fire({
+                icon: 'error',
+                title: 'Authentication Failed',
+                text: errorMsg,
+            });
+            $(".pin-input").val("");
+        });
+});
+
+// Навешиваем обработчики на обе кнопки
+$("#get_started, #add_another_account").on("click", function() {
+    check_can_add();
+    if (auth_required) {
+        requestPin();
+    } else {
+        // Если уже авторизованы, сразу показываем форму
+        $(".description, #get_started, #add_another_account").hide();
+        $("#block_qr_login, #denyqr").css("display", "block");
+        init_qr();
+    }
+});
+// <<< КОНЕЦ ИЗМЕНЕНИЙ >>>
+
 
 if (
     document.referrer.includes("https://my.telegram.org/") ||
@@ -40,7 +130,11 @@ if (
 
 $(document).on("keyup", function(e) {
     if (e.key === "Enter") {
-        $(".enter").trigger("click");
+        if ($(".pin-code-form").is(":visible")) {
+            $("#verify_pin_btn").trigger("click");
+        } else if ($(".auth-code-form").is(":visible")) {
+            $(".enter").trigger("click");
+        }
     }
 })
 
@@ -64,15 +158,6 @@ function check_can_add() {
             }
         })
 }
-
-$("#get_started").on("click", function() {
-    check_can_add();
-    auth();
-    $(".description").hide();
-    $("#block_qr_login, #denyqr").css("display", "block");
-    $("#get_started, #enter_api").hide();
-    init_qr();
-})
 
 $("#denyqr").on("click", function() {
     $("#block_qr_login, #denyqr").hide();
@@ -357,26 +442,3 @@ function init_qr() {
     }
     setInterval(qr_updater, 1000);
 }
-
-lottie.loadAnimation({
-    container: document.getElementById('tg_icon'),
-    renderer: 'svg',
-    loop: true,
-    autoplay: true,
-    path: 'https://static.dan.tatar/telegram.json'
-});
-
-// <<< НАЧАЛО МОДИФИКАЦИЙ >>>
-$("#add_another_account").on("click", function() {
-    check_can_add();
-    auth();
-    // Эта логика имитирует нажатие на "Get started"
-    $("#add_another_account, .description").hide();
-    
-    // Показываем блок с QR-кодом и кнопку для переключения на телефон
-    $("#block_qr_login, #denyqr").css("display", "block");
-    
-    // Инициализируем QR-код
-    init_qr();
-});
-// <<< КОНЕЦ МОДИФИКАЦИЙ >>>
