@@ -319,16 +319,10 @@ class TerminalMod(loader.Module):
     async def terminalcmd(self, message):
         await self.run_command(message, utils.get_args_raw(message))
         
-    @loader.command()
-    async def pipcmd(self, message):
-        await self.run_command(
-            message,
-            ("pip " if os.geteuid() == 0 else "sudo -S pip ")
-            + utils.get_args_raw(message)
-            )
-
-    @loader.command()
+    # <<< НАЧАЛО ИЗМЕНЕНИЙ >>>
+    @loader.command(aliases=["atp", "oatp"])
     async def aptcmd(self, message):
+    # <<< КОНЕЦ ИЗМЕНЕНИЙ >>>
         await self.run_command(
             message,
             ("apt " if os.geteuid() == 0 else "sudo -S apt ")
