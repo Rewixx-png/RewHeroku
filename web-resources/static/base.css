@@ -1,3 +1,5 @@
+/* Файл: web-resources/static/base.css */
+
 @import "https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap";
 
 @font-face {
@@ -5,6 +7,7 @@
     src: url(/static/Movement.ttf) format("truetype");
 }
 
+/* --- ОБЩИЕ СТИЛИ --- */
 body,
 html {
     background: #101014;
@@ -12,7 +15,7 @@ html {
     height: 100%;
     margin: 0;
     padding: 0;
-    overflow: hidden;
+    overflow: hidden; /* Отключаем прокрутку на ПК */
     font-family: 'Manrope', sans-serif;
     color: #e0e0e0;
 }
@@ -73,29 +76,6 @@ html {
     justify-content: center;
     align-items: center;
     display: flex;
-}
-
-.main.installation {
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
-    min-width: 500px;
-    min-height: 450px;
-    transition: box-shadow 0.3s ease-in-out;
-}
-
-.main.installation:hover {
-    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.3), 0 0 50px rgba(135, 116, 225, 0.15);
-}
-
-.center {
-    justify-content: center;
-    align-items: center;
-    display: flex;
-    position: relative;
-    z-index: 2;
-    margin-top: 25px;
-    flex-direction: column;
 }
 
 .blur {
@@ -203,9 +183,33 @@ label {
     height: 30px;
 }
 
-/* Wizard styles */
+
+/* --- СТИЛИ МАСТЕРА УСТАНОВКИ (WIZARD) --- */
+.main.installation {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    min-width: 500px;
+    min-height: 450px;
+    transition: box-shadow 0.3s ease-in-out;
+}
+
+.main.installation:hover {
+    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.3), 0 0 50px rgba(135, 116, 225, 0.15);
+}
+
+.center {
+    justify-content: center;
+    align-items: center;
+    display: flex;
+    position: relative;
+    z-index: 2;
+    margin-top: 25px;
+    flex-direction: column;
+}
+
 .wizard-step {
-    display: none; /* Hide all steps by default */
+    display: none;
     animation: fadeIn 0.5s ease-in-out;
     width: 100%;
     flex-grow: 1;
@@ -214,7 +218,7 @@ label {
 }
 
 .wizard-step.active {
-    display: flex; /* Show only the active step */
+    display: flex;
 }
 
 @keyframes fadeIn {
@@ -281,7 +285,7 @@ label {
     flex-direction: row !important;
 }
 
-/* QR Styles */
+/* --- СТИЛИ QR-КОДА --- */
 .tg_guide ol li::before {
     content: counter(item);
     display: flex;
@@ -322,6 +326,7 @@ label {
     background: rgba(255, 255, 255, 0.9);
 }
 
+/* --- ПРОЧИЕ СТИЛИ --- */
 .small-btn {
     padding: 8px 16px;
     font-size: 14px;
@@ -367,7 +372,6 @@ label {
     border-radius: 2px
 }
 
-/* Icon for Add Account button */
 .gg-add {
     box-sizing: border-box;
     position: relative;
@@ -396,4 +400,74 @@ label {
     height: 8px;
     top: 2px;
     left: 5px
+}
+
+
+/* 🚀 --- СТИЛИ ДЛЯ МОБИЛЬНЫХ УСТРОЙСТВ --- 🚀 */
+/* Применяются, если ширина экрана 768px или меньше */
+@media (max-width: 768px) {
+    body, html {
+        overflow: auto; /* Разрешаем прокрутку на мобильных */
+    }
+
+    .main.installation {
+        min-width: auto;      /* Убираем минимальную ширину */
+        width: 90%;           /* Делаем блок на 90% ширины экрана */
+        padding: 2rem 1.5rem; /* Уменьшаем внутренние отступы */
+        min-height: auto;     /* Убираем минимальную высоту */
+        margin-top: 20px;
+        margin-bottom: 20px;
+    }
+
+    .title {
+        font-size: 32px; /* Уменьшаем заголовок */
+    }
+
+    .description {
+        font-size: 16px; /* Уменьшаем описание */
+    }
+
+    .heroku_label {
+        font-size: 24px;
+        padding: 8px 12px;
+    }
+
+    .ringed_planet {
+        height: 24px;
+    }
+
+    .button-group {
+        flex-direction: column; /* Кнопки выбора входа ставим друг под другом */
+        width: 100%;
+    }
+
+    .button {
+        width: 100%; /* Растягиваем кнопки на всю ширину для удобства нажатия */
+        margin: 8px 0;
+        padding: 15px; /* Делаем кнопки выше */
+    }
+
+    input {
+        width: 100%; /* Поля ввода также на всю ширину */
+        box-sizing: border-box; /* Учитываем padding и border в общей ширине */
+    }
+
+    .navigation-buttons {
+        flex-direction: column-reverse; /* Кнопка "Далее" будет сверху */
+    }
+
+    .nav-btn {
+        width: 100%;
+        margin: 5px 0;
+    }
+
+    .qr_inner {
+        transform: scale(0.85); /* Немного уменьшаем QR-код */
+        padding: 10px;
+    }
+    
+    .tg_guide ol {
+        padding: 0;
+        margin-top: 10px;
+    }
 }
