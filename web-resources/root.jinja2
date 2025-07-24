@@ -19,6 +19,9 @@
     <source src="{{ static('audio/bass.mp3') }}" type="audio/mpeg">
     Your browser does not support the audio element.
 </audio>
+<div class="bg">
+    <canvas id="particle-canvas"></canvas> {# <-- Элемент для фона с частицами #}
+</div>
 <div class="wrapper">
     <div class="blur main installation" id="wizard">
         <!-- Progress Bar -->
@@ -31,11 +34,11 @@
 
         <!-- Step 1: Welcome -->
         <div class="wizard-step active" id="step-1">
+            <div id="rocket-animation"></div> {# <-- Контейнер для анимации ракеты #}
             <div class="title">
                 <div class="heroku_label">
                     <div class="label_inner">
-                        <img src="{{ platform_emoji }}" class="ringed_planet">
-                         Heroku
+                        RewHost
                     </div>
                 </div>
             </div><br>
@@ -147,6 +150,8 @@
         </div>
     </div>
 </div>
+
+<div class="watermark">t.me/RewiX_X</div> {# <-- Водяной знак #}
 
 <script>
   var skip_creds = "{{ skip_creds }}" == "True";
