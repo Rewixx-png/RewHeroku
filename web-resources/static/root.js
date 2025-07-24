@@ -21,12 +21,22 @@ $(document).ready(function() {
 
     if (loudMusic) {
         const playLoudMusic = () => {
-            loudMusic.volume = 1.0; // Максимальная громкость
-            loudMusic.play().catch(error => {
-                console.error("Ошибка воспроизведения аудио:", error);
-            });
+            // Устанавливаем громкость на максимум
+            loudMusic.volume = 1.0;
+            // Перематываем на начало, чтобы музыка играла при каждом клике
+            loudMusic.currentTime = 0;
+            // Запускаем воспроизведение
+            const playPromise = loudMusic.play();
+
+            if (playPromise !== undefined) {
+                playPromise.catch(error => {
+                    // Обработка возможных ошибок, если браузер блокирует воспроизведение
+                    console.error("Ошибка воспроизведения аудио:", error);
+                });
+            }
         };
 
+        // Привязываем функцию к кнопкам
         startBtn.on('click', playLoudMusic);
         addAccountBtn.on('click', playLoudMusic);
     }
