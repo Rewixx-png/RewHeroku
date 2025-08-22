@@ -56,10 +56,8 @@ from .._internal import restart
 from ..tl_cache import CustomTelegramClient
 from ..version import __version__
 
-try:
-    from . import root
-except ImportError:
-    from . import web as root
+# <<< ИЗМЕНЕНИЕ 1: Удаляем некорректный циклический импорт >>>
+# from . import core as root
 
 DATA_DIR = (
     "/data"
@@ -70,7 +68,8 @@ DATA_DIR = (
 logger = logging.getLogger(__name__)
 
 
-class Web(root.Web):
+# <<< ИЗМЕНЕНИЕ 2: Убираем некорректное наследование >>>
+class Web:
     def __init__(self, **kwargs):
         self.sign_in_clients = {}
         self._pending_client = None
@@ -357,10 +356,8 @@ class Web(root.Web):
         client = self._get_client()
         self._pending_client = client
 
-        # <<< ИЗМЕНЕНИЕ ЗДЕСЬ >>>
         # Вручную устанавливаем адрес дата-центра перед подключением
         await client.session.set_dc(4, "149.154.167.51", 443)
-        # <<< КОНЕЦ ИЗМЕНЕНИЯ >>>
 
         await client.connect()
         try:
