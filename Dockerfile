@@ -1,7 +1,7 @@
 # Используем стабильный и поддерживаемый образ Debian 11 "Bullseye"
 FROM python:3.10-slim-bullseye
 
-# Устанавливаем переменные окружения для автоматической установки пакетов
+# Устанавливаем переменные окружения
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -14,18 +14,25 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # Устанавливаем рабочую директорию
 WORKDIR /app
 
-# <<< ГЛАВНОЕ ИЗМЕНЕНИЕ: Принудительно исправляем источники пакетов (репозитории) >>>
-# Это гарантирует, что apt-get будет искать пакеты в правильных, рабочих местах
-RUN echo "deb http://deb.debian.org/debian bullseye main contrib non-free" > /etc/apt/sources.list && \
-    echo "deb http://deb.debian.org/debian-security/ bullseye-security main contrib non-free" >> /etc/apt/sources.list && \
-    echo "deb http://deb.debian.org/debian bullseye-updates main contrib non-free" >> /etc/apt/sources.list && \
-    # Устанавливаем все системные зависимости в одной команде для оптимизации
-    apt-get update -qq && apt-get install --no-install-recommends -y \
-    build-essential \
+# --- ИЗМЕНЕНИЕ: Разделяем установку на логические шаги для надежности ---
+
+# Шаг 1: Обновляем репозитории и ставим базовые утилиты, необходимые для следующих шагов
+RUN apt-get update -qq && apt-get install --no-install-recommends -y \
     curl \
+    git \
+    ca-certificates
+
+# Шаг 2: Устанавливаем Node.js (этот шаг теперь кешируется отдельно)
+RUN curl -sL https://deb.nodesource.com/setup_18.x | bash - && \
+    apt-get install -y --no-install-recommends nodejs
+
+# Шаг 3: Добавляем ветки 'contrib' и 'non-free' для wkhtmltopdf и устанавливаем остальные зависимости
+RUN echo "deb http://deb.debian.org/debian bullseye main contrib non-free" > /etc/apt/sources.list && \
+    apt-get update -qq && \
+    apt-get install --no-install-recommends -y \
+    build-essential \
     ffmpeg \
     gcc \
-    git \
     libavcodec-dev \
     libavdevice-dev \
     libavformat-dev \
@@ -37,24 +44,19 @@ RUN echo "deb http://deb.debian.org/debian bullseye main contrib non-free" > /et
     openssh-server \
     python3-dev \
     wkhtmltopdf && \
-    # Устанавливаем Node.js
-    curl -sL https://deb.nodesource.com/setup_18.x | bash - && \
-    apt-get install -y nodejs && \
-    # Очищаем временные файлы и кэш apt-get, чтобы образ был меньше
+    # Финальная очистка
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /tmp/*
 
-# Сначала копируем только файл с зависимостями для кэширования этого слоя
+# Копируем файл с зависимостями и устанавливаем их
 COPY requirements.txt .
-
-# Устанавливаем Python-зависимости
 RUN pip install --no-warn-script-location -U -r requirements.txt
 
-# Копируем весь остальной код приложения
+# Копируем остальной код приложения
 COPY . .
 
-# Открываем порт, который будет слушать приложение
+# Открываем порт
 EXPOSE 8080
 
-# Команда для запуска приложения при старте контейнера
+# Команда запуска
 CMD ["python3", "-m", "heroku", "--root"]
