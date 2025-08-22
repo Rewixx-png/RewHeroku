@@ -1,32 +1,26 @@
-FROM python:3.10 AS python-base
-FROM python-base AS builder-base
+# Используем официальный образ Python 3.10
+FROM python:3.10-slim-buster
 
+# Устанавливаем переменные окружения, чтобы избежать лишних логов и кэширования
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    \
-    PIP_NO_CACHE_DIR=off \
+    PIP_NO_CACHE_DIR=on \
     PIP_DISABLE_PIP_VERSION_CHECK=on \
     PIP_DEFAULT_TIMEOUT=100 \
-    AIOHTTP_NO_EXTENSIONS=1 \
-    \
-    PYSETUP_PATH="/opt/pysetup" \
-    VENV_PATH="/opt/pysetup/.venv" \
-    \
     DOCKER=true \
-    REWHOST=Lite \
     GIT_PYTHON_REFRESH=quiet
 
-# Создаем рабочую директорию
-WORKDIR /data/Heroku
+# Устанавливаем рабочую директорию внутри контейнера
+WORKDIR /app
 
-# <<< НАЧАЛО ИЗМЕНЕНИЙ >>>
-
-# Создаем символические ссылки для новых команд
-RUN ln -s /usr/bin/apt-get /usr/bin/oatp && \
-    ln -s /usr/bin/apt /usr/bin/atp
-
-# Устанавливаем системные зависимости, используя новые команды
-RUN atp update && atp upgrade -y && oatp install --no-install-recommends -y \
+# --- ГЛАВНОЕ ИСПРАВЛЕНИЕ ---
+# Выполняем все системные установки в ОДНОЙ команде, чтобы уменьшить количество слоев и размер образа.
+# 1. Обновляем списки пакетов
+# 2. Устанавливаем все необходимые системные зависимости через apt-get
+# 3. Скачиваем и выполняем скрипт для установки Node.js v18
+# 4. Устанавливаем Node.js
+# 5. Очищаем временные файлы и кэш apt-get, чтобы образ был меньше
+RUN apt-get update && apt-get install --no-install-recommends -y \
     build-essential \
     curl \
     ffmpeg \
@@ -41,26 +35,24 @@ RUN atp update && atp upgrade -y && oatp install --no-install-recommends -y \
     libswscale-dev \
     openssl \
     openssh-server \
-    python3 \
     python3-dev \
-    python3-pip \
-    wkhtmltopdf
-RUN curl -sL https://deb.nodesource.com/setup_18.x -o nodesource_setup.sh && \
-    bash nodesource_setup.sh && \
-    oatp install -y nodejs && \
-    rm nodesource_setup.sh
-RUN rm -rf /var/lib/apt/lists/ /var/cache/apt/archives/ /tmp/*
+    wkhtmltopdf && \
+    curl -sL https://deb.nodesource.com/setup_18.x | bash - && \
+    apt-get install -y nodejs && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /tmp/*
 
-# Сначала копируем только файл с зависимостями.
+# Сначала копируем только файл с зависимостями для кэширования этого слоя
 COPY requirements.txt .
 
-# Устанавливаем зависимости
-RUN pip install --no-warn-script-location --no-cache-dir -U -r requirements.txt
+# Устанавливаем Python-зависимости
+RUN pip install --no-warn-script-location -U -r requirements.txt
 
-# А теперь копируем ВЕСЬ остальной код юзербота.
+# Копируем весь остальной код приложения
 COPY . .
 
-# <<< КОНЕЦ ИЗМЕНЕНИЙ >>>
-
+# Открываем порт, который будет слушать приложение
 EXPOSE 8080
-CMD ["python", "-m", "heroku","--root"]
+
+# Команда для запуска приложения при старте контейнера
+CMD ["python3", "-m", "heroku", "--root"]
