@@ -14,22 +14,20 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # Устанавливаем рабочую директорию
 WORKDIR /app
 
-# --- ИЗМЕНЕНИЕ: Разделяем установку на логические шаги для надежности ---
+# Шаг 1: Принудительно исправляем источники пакетов (репозитории)
+RUN echo "deb http://deb.debian.org/debian bullseye main contrib non-free" > /etc/apt/sources.list && \
+    echo "deb http://deb.debian.org/debian-security/ bullseye-security main contrib non-free" >> /etc/apt/sources.list && \
+    echo "deb http://deb.debian.org/debian bullseye-updates main contrib non-free" >> /etc/apt/sources.list
 
-# Шаг 1: Обновляем репозитории и ставим базовые утилиты, необходимые для следующих шагов
-RUN apt-get update -qq && apt-get install --no-install-recommends -y \
-    curl \
-    git \
-    ca-certificates
+# Шаг 2: Обновляем списки и ставим базовые утилиты
+RUN apt-get update -qq && apt-get install --no-install-recommends -y curl git ca-certificates
 
-# Шаг 2: Устанавливаем Node.js (этот шаг теперь кешируется отдельно)
+# Шаг 3: Устанавливаем Node.js
 RUN curl -sL https://deb.nodesource.com/setup_18.x | bash - && \
     apt-get install -y --no-install-recommends nodejs
 
-# Шаг 3: Добавляем ветки 'contrib' и 'non-free' для wkhtmltopdf и устанавливаем остальные зависимости
-RUN echo "deb http://deb.debian.org/debian bullseye main contrib non-free" > /etc/apt/sources.list && \
-    apt-get update -qq && \
-    apt-get install --no-install-recommends -y \
+# Шаг 4: Устанавливаем остальные тяжелые зависимости
+RUN apt-get install --no-install-recommends -y \
     build-essential \
     ffmpeg \
     gcc \
