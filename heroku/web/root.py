@@ -23,8 +23,8 @@
 # 🔑 https://www.gnu.org/licenses/agpl-3.0.html
 
 import asyncio
-import collections
-import functools
+import contextlib
+import inspect
 import logging
 import os
 import re
@@ -65,7 +65,7 @@ DATA_DIR = (
 logger = logging.getLogger(__name__)
 
 
-class Web:
+class Web(root.Web):
     def __init__(self, **kwargs):
         self.sign_in_clients = {}
         self._pending_client = None
@@ -351,6 +351,11 @@ class Web:
 
         client = self._get_client()
         self._pending_client = client
+
+        # <<< ИЗМЕНЕНИЕ ЗДЕСЬ >>>
+        # Вручную устанавливаем адрес дата-центра перед подключением
+        await client.session.set_dc(4, "149.154.167.51", 443)
+        # <<< КОНЕЦ ИЗМЕНЕНИЯ >>>
 
         await client.connect()
         try:
