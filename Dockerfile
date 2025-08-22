@@ -1,11 +1,9 @@
-# <<< ГЛАВНОЕ ИСПРАВЛЕНИЕ: Жестко указываем стабильную версию Debian 11 (Bullseye) >>>
+# Используем стабильный и поддерживаемый образ Debian 11 "Bullseye"
 FROM python:3.10-slim-bullseye
 
-# Устанавливаем переменную, чтобы избежать интерактивных диалогов при установке пакетов
-ENV DEBIAN_FRONTEND=noninteractive
-
-# Устанавливаем остальные переменные окружения
-ENV PYTHONUNBUFFERED=1 \
+# Устанавливаем переменные окружения для автоматической установки пакетов
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=on \
     PIP_DISABLE_PIP_VERSION_CHECK=on \
@@ -13,11 +11,16 @@ ENV PYTHONUNBUFFERED=1 \
     DOCKER=true \
     GIT_PYTHON_REFRESH=quiet
 
-# Устанавливаем рабочую директорию внутри контейнера
+# Устанавливаем рабочую директорию
 WORKDIR /app
 
-# Выполняем все системные установки в ОДНОЙ команде для оптимизации
-RUN apt-get update -qq && apt-get install --no-install-recommends -y \
+# <<< ГЛАВНОЕ ИЗМЕНЕНИЕ: Принудительно исправляем источники пакетов (репозитории) >>>
+# Это гарантирует, что apt-get будет искать пакеты в правильных, рабочих местах
+RUN echo "deb http://deb.debian.org/debian bullseye main contrib non-free" > /etc/apt/sources.list && \
+    echo "deb http://deb.debian.org/debian-security/ bullseye-security main contrib non-free" >> /etc/apt/sources.list && \
+    echo "deb http://deb.debian.org/debian bullseye-updates main contrib non-free" >> /etc/apt/sources.list && \
+    # Устанавливаем все системные зависимости в одной команде для оптимизации
+    apt-get update -qq && apt-get install --no-install-recommends -y \
     build-essential \
     curl \
     ffmpeg \
@@ -37,7 +40,7 @@ RUN apt-get update -qq && apt-get install --no-install-recommends -y \
     # Устанавливаем Node.js
     curl -sL https://deb.nodesource.com/setup_18.x | bash - && \
     apt-get install -y nodejs && \
-    # Очищаем кэш apt-get, чтобы образ был меньше
+    # Очищаем временные файлы и кэш apt-get, чтобы образ был меньше
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /tmp/*
 
