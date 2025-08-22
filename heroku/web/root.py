@@ -56,6 +56,11 @@ from .._internal import restart
 from ..tl_cache import CustomTelegramClient
 from ..version import __version__
 
+try:
+    from . import root
+except ImportError:
+    from . import web as root
+
 DATA_DIR = (
     "/data"
     if "DOCKER" in os.environ
@@ -353,7 +358,8 @@ class Web(root.Web):
         self._pending_client = client
 
         # <<< ИЗМЕНЕНИЕ ЗДЕСЬ >>>
-        # Вручную устанавливаем адрес дата-центра перед подключением
+        # Вручную устанавливаем адрес дата-центра перед подключением,
+        # чтобы избежать ошибки 'host and port was not specified'.
         await client.session.set_dc(4, "149.154.167.51", 443)
         # <<< КОНЕЦ ИЗМЕНЕНИЯ >>>
 
