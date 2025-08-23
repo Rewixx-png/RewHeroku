@@ -56,8 +56,11 @@ from .._internal import restart
 from ..tl_cache import CustomTelegramClient
 from ..version import __version__
 
-# <<< ИЗМЕНЕНИЕ 1: Удаляем некорректный циклический импорт >>>
-# from . import core as root
+try:
+    from . import root
+except ImportError:
+    from . import web as root
+
 
 DATA_DIR = (
     "/data"
@@ -68,8 +71,7 @@ DATA_DIR = (
 logger = logging.getLogger(__name__)
 
 
-# <<< ИЗМЕНЕНИЕ 2: Убираем некорректное наследование >>>
-class Web:
+class Web(root.Web):
     def __init__(self, **kwargs):
         self.sign_in_clients = {}
         self._pending_client = None
@@ -275,6 +277,9 @@ class Web:
         client = self._get_client()
         self._pending_client = client
 
+        # <<< ИСПРАВЛЕНИЕ 1: Добавляем установку DC для QR-логина >>>
+        client.session.set_dc(4, "149.154.167.51", 443)
+
         await client.connect()
         self._qr_login = await client.qr_login()
         self._qr_task = asyncio.ensure_future(self._qr_login_poll())
@@ -356,8 +361,8 @@ class Web:
         client = self._get_client()
         self._pending_client = client
 
-        # Вручную устанавливаем адрес дата-центра перед подключением
-        await client.session.set_dc(4, "149.154.167.51", 443)
+        # <<< ИСПРАВЛЕНИЕ 2: Убираем `await` у синхронной функции >>>
+        client.session.set_dc(4, "149.154.167.51", 443)
 
         await client.connect()
         try:
